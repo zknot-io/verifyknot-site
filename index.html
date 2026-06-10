@@ -481,10 +481,13 @@
         </div>
 
         <div class="result-wrap" id="resultWrap">
-          <div class="result-status ok" id="resultStatus">
-            <div class="status-icon">✓</div>
-            <div class="status-text">VERIFIED — CHAIN INTACT</div>
+          <div class="result-status" id="resultStatus">
+            <div class="status-icon" id="rStatusIcon">…</div>
+            <div class="status-text" id="rStatusText">CHECKING IN YOUR BROWSER…</div>
             <div class="chain-badge" id="rChainBadge">#00000000</div>
+          </div>
+          <div class="field-row" id="rHeadlineRow" style="display:block;padding:10px 0">
+            <div class="field-val" id="rHeadline" style="white-space:normal">—</div>
           </div>
           <div class="result-fields">
             <div class="field-row">
@@ -519,6 +522,25 @@
               <div class="field-key">Artifact Hash</div>
               <div class="field-val hash" id="rHash">—</div>
             </div>
+            <div class="field-row">
+              <div class="field-key">Identity</div>
+              <div class="field-val" id="rIdentity">—</div>
+            </div>
+            <div class="field-row">
+              <div class="field-key">Presence binding</div>
+              <div class="field-val" id="rPresence">—</div>
+            </div>
+            <div class="field-row">
+              <div class="field-key">Content binding</div>
+              <div class="field-val" id="rContent">—</div>
+            </div>
+            <div class="field-row" style="display:block;padding:10px 0">
+              <details>
+                <summary class="field-key" style="cursor:pointer">What was checked (each line ran on your machine)</summary>
+                <ul id="rChecks" style="margin:8px 0 0 18px"></ul>
+              </details>
+              <div id="rDiscrepancy" style="display:none;margin-top:8px;white-space:normal"></div>
+            </div>
           </div>
         </div>
 
@@ -544,71 +566,92 @@
   </div>
 </footer>
 
-<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script type="module">
+  import { verifyRecord, mapApiResponse } from './verifier.mjs';
   const API = 'https://api.zknot.io/v1/verify';
 
+  const $ = (id) => document.getElementById(id);
+
+  function renderVerdict(r) {
+    const status = $('resultStatus');
+    status.classList.remove('ok');
+    if (r.verdict === 'VERIFIED_CLIENT_SIDE') {
+      status.classList.add('ok');
+      $('rStatusIcon').textContent = '✓';
+      $('rStatusText').textContent = 'VERIFIED — IN YOUR BROWSER';
+    } else if (r.verdict === 'FAILED') {
+      $('rStatusIcon').textContent = '✗';
+      $('rStatusText').textContent = 'VERIFICATION FAILED';
+    } else {
+      $('rStatusIcon').textContent = '⚠';
+      $('rStatusText').textContent = 'CANNOT VERIFY — RECORD DATA INCOMPLETE';
+    }
+    $('rHeadline').textContent = r.headline;
+    $('rIdentity').textContent = r.badges.identity;
+    $('rPresence').textContent = r.badges.presence;
+    $('rContent').textContent = r.badges.content;
+    const ul = $('rChecks'); ul.innerHTML = '';
+    for (const c of r.checks) {
+      const li = document.createElement('li');
+      li.textContent = `[${c.pass === true ? 'PASS' : c.pass === false ? 'FAIL' : 'NOTE'}] ${c.id}: ${c.detail}`;
+      ul.appendChild(li);
+    }
+    const d = $('rDiscrepancy');
+    if (r.server_discrepancy) { d.textContent = 'Discrepancy: ' + r.server_discrepancy; d.style.display = 'block'; }
+    else { d.style.display = 'none'; }
+  }
+
   async function verify(code) {
-    const btn = document.getElementById('verifyBtn');
-    const resultWrap = document.getElementById('resultWrap');
-    const errorWrap = document.getElementById('errorWrap');
-
-    btn.textContent = '...';
-    btn.disabled = true;
-    resultWrap.classList.remove('visible');
-    errorWrap.classList.remove('visible');
-
+    const btn = $('verifyBtn'), resultWrap = $('resultWrap'), errorWrap = $('errorWrap');
+    btn.textContent = '...'; btn.disabled = true;
+    resultWrap.classList.remove('visible'); errorWrap.classList.remove('visible');
     try {
       const res = await fetch(`${API}/${encodeURIComponent(code.trim())}`);
       const data = await res.json();
+      if (!res.ok) throw new Error(data.detail?.message || data.detail || `No record found for: ${code}`);
 
-      if (!res.ok) {
-        throw new Error(data.detail?.message || data.detail || `No record found for: ${code}`);
-      }
+      // Resolve layer — server data, displayed as data (never as the verdict)
+      $('rShortCode').textContent = data.short_code;
+      $('rArtifactType').textContent = data.artifact_type;
+      $('rDeviceId').textContent = data.device_id;
+      $('rSessionId').textContent = data.session_id || '—';
+      $('rSignedAt').textContent = new Date(data.signed_at).toISOString();
+      $('rChainPos').textContent = `Position ${data.chain_position} of chain`;
+      $('rChainBadge').textContent = '#' + String(data.chain_position).padStart(8, '0');
+      $('rPrevHash').textContent = data.chain_prev_hash || 'GENESIS — first entry';
+      $('rHash').textContent = data.artifact_hash;
 
-      // Populate fields
-      document.getElementById('rShortCode').textContent = data.short_code;
-      document.getElementById('rArtifactType').textContent = data.artifact_type;
-      document.getElementById('rDeviceId').textContent = data.device_id;
-      document.getElementById('rSessionId').textContent = data.session_id || '—';
-      document.getElementById('rSignedAt').textContent = new Date(data.signed_at).toISOString();
-      document.getElementById('rChainPos').textContent = `Position ${data.chain_position} of chain`;
-      document.getElementById('rChainBadge').textContent = '#' + String(data.chain_position).padStart(8, '0');
-      document.getElementById('rPrevHash').textContent = data.chain_prev_hash || 'GENESIS — first entry';
-      document.getElementById('rHash').textContent = data.artifact_hash;
-
-      // Update URL without reload so this page is shareable
-      const newUrl = `${window.location.origin}/${encodeURIComponent(data.short_code)}`;
-      window.history.replaceState({}, '', newUrl);
-
+      // Verdict layer — computed HERE. The server's `verified` boolean is never displayed
+      // as the verdict; it is only compared against the local math (discrepancy surface).
+      $('rStatusIcon').textContent = '…';
+      $('rStatusText').textContent = 'CHECKING IN YOUR BROWSER…';
       resultWrap.classList.add('visible');
+      renderVerdict(await verifyRecord(mapApiResponse(data)));
 
+      // Canonical shareable URL: /v/{code}
+      window.history.replaceState({}, '', `${window.location.origin}/v/${encodeURIComponent(data.short_code)}`);
     } catch (err) {
       errorWrap.textContent = '✗ ' + err.message;
       errorWrap.classList.add('visible');
     } finally {
-      btn.textContent = 'Verify';
-      btn.disabled = false;
+      btn.textContent = 'Verify'; btn.disabled = false;
     }
   }
 
-  // Wire up
-  document.getElementById('verifyBtn').addEventListener('click', () => {
-    const code = document.getElementById('codeInput').value.trim();
-    if (code) verify(code);
+  $('verifyBtn').addEventListener('click', () => {
+    const code = $('codeInput').value.trim(); if (code) verify(code);
+  });
+  $('codeInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { const code = $('codeInput').value.trim(); if (code) verify(code); }
   });
 
-  document.getElementById('codeInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      const code = document.getElementById('codeInput').value.trim();
-      if (code) verify(code);
-    }
-  });
-
-  // Auto-run if short code is in the URL path: verifyknot.io/ZK-XXXX-XXX
-  const pathCode = window.location.pathname.replace('/', '').trim();
-  if (pathCode && pathCode.length > 0) {
-    document.getElementById('codeInput').value = decodeURIComponent(pathCode);
-    verify(decodeURIComponent(pathCode));
+  // Auto-run from URL: handles BOTH /v/{code} (canonical) and bare /{code}
+  // (old script broke /v/ — replace('/','') only strips the first slash)
+  const m = window.location.pathname.match(/^\/(?:v\/)?([^\/]+)\/?$/);
+  if (m && m[1] && m[1] !== 'v') {
+    const code = decodeURIComponent(m[1]);
+    $('codeInput').value = code;
+    verify(code);
   }
 </script>
 </body>
