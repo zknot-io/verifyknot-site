@@ -1,0 +1,4 @@
+# bare short code -> canonical /v/ form (SOP-001 links keep working)
+/ZK-:a-:b   /v/ZK-:a-:b   301
+# /v/* serves the single-page verify app
+/v/*        /index.html   200
