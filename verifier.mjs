@@ -49,13 +49,13 @@ const SUPPORTED_VERSIONS = ["1.0"];
  */
 export function mapApiResponse(api) {
   return {
-    record_version: api.record_version ?? "1.0", // >>CONFIRM<< add to API response
+    record_version: api.record_version ?? api.metadata?.record_version ?? "1.0",
     short_code: api.short_code ?? api.code,
     device_id: api.device_id,
-    identity_tier: api.identity_tier ?? "SELF-ASSERTED",
-    presence_binding_type: api.presence_binding_type ?? "none",
-    content_binding_type: api.content_binding_type ?? "none",
-    signed_payload_hex: api.signed_payload_hex ?? api.signed_payload,
+    identity_tier: api.identity_tier ?? api.metadata?.identity_tier ?? "SELF-ASSERTED",
+    presence_binding_type: api.presence_binding_type ?? api.metadata?.presence_binding_type ?? "none",
+    content_binding_type: api.content_binding_type ?? api.metadata?.content_binding_type ?? "none",
+    signed_payload_hex: api.signed_payload_hex ?? api.signed_payload ?? api.metadata?.signed_payload_hex,
     challenge_hash: api.challenge_hash,
     signature: api.signature,
     public_key: api.public_key,
@@ -122,8 +122,12 @@ const subtle = globalThis.crypto.subtle;
 
 /** @param {Uint8Array} pubkeyRaw uncompressed SEC1 (65B) */
 async function importP256(pubkeyRaw) {
+  if (pubkeyRaw.length === 64) {
+    const padded = new Uint8Array(65); padded[0] = 0x04; padded.set(pubkeyRaw, 1);
+    pubkeyRaw = padded;
+  }
   if (pubkeyRaw.length !== 65 || pubkeyRaw[0] !== 0x04) {
-    throw new Error("public key must be uncompressed SEC1 (04||X||Y, 65 bytes)");
+    throw new Error("public key must be 64 bytes (X||Y) or 65 bytes (04||X||Y)");
   }
   return subtle.importKey(
     "raw",
