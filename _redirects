@@ -1,4 +1,10 @@
+# /sign serves the document-signing app (must come BEFORE the catch-alls)
+/sign       /sign/index.html   200
+/sign/      /sign/index.html   200
+# /start serves the live-device verification app
+/start      /start/index.html  200
+/start/     /start/index.html  200
 # bare short code -> canonical /v/ form (SOP-001 links keep working)
-/ZK-:a-:b   /v/ZK-:a-:b   301
+/ZK-:a-:b   /v/ZK-:a-:b        301
 # /v/* serves the single-page verify app
-/v/*        /index.html   200
+/v/*        /index.html        200
