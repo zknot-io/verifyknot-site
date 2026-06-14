@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ZKNOT™ Sign — Attest a Document</title>
+  <meta name="description" content="Drop a document, press your ZKNOT Attestor, and get a verifiable ZK number. Your file is hashed in your browser and never uploaded." />
+  <link rel="icon" href="https://zknot.io/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg:#0a0b0d; --bg-1:#0f1114; --bg-2:#141720; --bg-card:#111318;
+      --border:rgba(255,255,255,0.07); --border-active:rgba(255,255,255,0.18);
+      --text:#e8eaed; --text-muted:#6b7280; --text-dim:#9ca3af;
+      --accent:#22c55e; --accent-dim:rgba(34,197,94,0.12);
+      --red:#ef4444; --red-dim:rgba(239,68,68,0.12);
+      --amber:#f59e0b; --amber-dim:rgba(245,158,11,0.12);
+      --mono:'DM Mono',monospace; --sans:'DM Sans',sans-serif; --display:'Syne',sans-serif;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    html{height:100%;}
+    body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;min-height:100vh;display:flex;flex-direction:column;}
+    body::before{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");pointer-events:none;z-index:9999;opacity:0.4;}
+    nav{display:flex;align-items:center;justify-content:space-between;padding:0 40px;height:64px;border-bottom:1px solid var(--border);background:rgba(10,11,13,0.9);backdrop-filter:blur(20px);position:sticky;top:0;z-index:10;}
+    .nav-logo{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text);}
+    .nav-logo-text{font-family:var(--display);font-weight:700;font-size:18px;letter-spacing:0.02em;}
+    .nav-logo-text span{color:var(--accent);}
+    .nav-right{font-family:var(--mono);font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.1em;}
+    main{flex:1;width:100%;max-width:720px;margin:0 auto;padding:56px 24px 80px;}
+    .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);margin-bottom:14px;}
+    h1{font-family:var(--display);font-weight:700;font-size:clamp(28px,5vw,40px);line-height:1.1;letter-spacing:-0.01em;margin-bottom:16px;}
+    .lede{color:var(--text-dim);font-size:17px;max-width:56ch;margin-bottom:36px;}
+    .card{background:var(--bg-card);border:1px solid var(--border);border-radius:16px;padding:28px;margin-bottom:20px;}
+    .card.hidden{display:none;}
+    .step-tag{font-family:var(--mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-muted);margin-bottom:14px;}
+    .drop{border:1.5px dashed var(--border-active);border-radius:12px;padding:34px 20px;text-align:center;cursor:pointer;transition:border-color .15s ease,background .15s ease;}
+    .drop:hover,.drop.over{border-color:var(--accent);background:var(--accent-dim);}
+    .drop p{color:var(--text-dim);font-size:15px;}
+    .drop .hint{font-family:var(--mono);font-size:12px;color:var(--text-muted);margin-top:8px;}
+    .filemeta{font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-top:14px;word-break:break-all;}
+    .filemeta b{color:var(--text);}
+    button.primary{font-family:var(--sans);font-weight:500;font-size:15px;color:#06210f;background:var(--accent);border:none;border-radius:10px;padding:13px 22px;cursor:pointer;transition:transform .08s ease,opacity .15s ease;}
+    button.primary:hover{opacity:.92;} button.primary:active{transform:translateY(1px);} button.primary:disabled{opacity:.4;cursor:not-allowed;}
+    button.ghost{font-family:var(--sans);font-weight:500;font-size:14px;color:var(--text-dim);background:transparent;border:1px solid var(--border-active);border-radius:10px;padding:11px 18px;cursor:pointer;}
+    button.ghost:hover{color:var(--text);border-color:var(--text-dim);}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;}
+    .status{font-family:var(--mono);font-size:13px;color:var(--text-dim);display:flex;align-items:center;gap:9px;margin-top:16px;}
+    .dot{width:9px;height:9px;border-radius:50%;background:var(--text-muted);flex:none;}
+    .dot.live{background:var(--accent);box-shadow:0 0 0 4px var(--accent-dim);animation:pulse 1.4s ease-in-out infinite;}
+    .dot.wait{background:var(--amber);box-shadow:0 0 0 4px var(--amber-dim);animation:pulse 1.4s ease-in-out infinite;}
+    .dot.err{background:var(--red);box-shadow:0 0 0 4px var(--red-dim);}
+    @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.45;}}
+    .verdict{border-radius:16px;padding:28px;border:1px solid var(--border);margin-bottom:20px;}
+    .verdict.ok{background:var(--accent-dim);border-color:rgba(34,197,94,0.35);}
+    .verdict.fail{background:var(--red-dim);border-color:rgba(239,68,68,0.35);}
+    .verdict h2{font-family:var(--display);font-size:22px;font-weight:700;margin-bottom:10px;}
+    .verdict.ok h2{color:var(--accent);} .verdict.fail h2{color:var(--red);}
+    .zk{font-family:var(--mono);font-size:20px;color:var(--accent);letter-spacing:0.04em;margin:6px 0 14px;}
+    dl.kv{display:grid;grid-template-columns:max-content 1fr;gap:8px 18px;font-family:var(--mono);font-size:12px;margin:14px 0;}
+    dl.kv dt{color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;}
+    dl.kv dd{color:var(--text-dim);word-break:break-all;}
+    a.inline{color:var(--accent);text-decoration:none;} a.inline:hover{text-decoration:underline;}
+    details{margin-top:10px;}
+    summary{font-family:var(--mono);font-size:12px;color:var(--text-muted);cursor:pointer;letter-spacing:0.04em;}
+    pre.log{font-family:var(--mono);font-size:11px;color:var(--text-dim);background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:12px;max-height:200px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin-top:10px;}
+    .honesty{font-size:13px;color:var(--text-muted);line-height:1.6;border-left:2px solid var(--border-active);padding-left:14px;margin-top:8px;}
+    .unsupported{background:var(--amber-dim);border:1px solid rgba(245,158,11,0.3);border-radius:12px;padding:18px;font-size:14px;color:var(--text-dim);}
+    .hidden{display:none;}
+    input[type=file]{display:none;}
+  </style>
+</head>
+<body>
+  <nav>
+    <a class="nav-logo" href="/"><span class="nav-logo-text">ZKNOT<span>™</span></span></a>
+    <div class="nav-right">Sign</div>
+  </nav>
+  <main>
+    <div class="eyebrow">Attest a document</div>
+    <h1>Sign a document with your Attestor.</h1>
+    <p class="lede">Choose a file, press your device, and get a verifiable ZK number. Your
+      document is hashed <em>in your browser</em> and never uploaded — only its hash is
+      attested. Anyone can later verify it at verifyknot.io without trusting ZKNOT.</p>
+
+    <div id="unsupported" class="unsupported hidden">
+      Signing needs the Web Serial API — available in desktop Chrome, Edge, or Opera, with the
+      Attestor plugged in. (Verifying an existing record works in any browser at
+      <a class="inline" href="/">verifyknot.io</a>.)
+    </div>
+
+    <div id="file-card" class="card hidden">
+      <div class="step-tag">Step 1 — choose a document</div>
+      <div id="drop" class="drop">
+        <p>Drop a file here, or click to choose</p>
+        <p class="hint">hashed locally · never uploaded</p>
+      </div>
+      <input type="file" id="fileInput" />
+      <div id="filemeta" class="filemeta hidden"></div>
+    </div>
+
+    <div id="connect-card" class="card hidden">
+      <div class="step-tag">Step 2 — connect &amp; sign</div>
+      <div class="row">
+        <button id="connectBtn" class="primary">Connect device</button>
+        <span class="status"><span id="dot" class="dot"></span><span id="statusText">No device connected</span></span>
+      </div>
+      <p id="pressHint" class="filemeta hidden">A challenge has been sent to the device. Press its button to sign.</p>
+      <div class="row" style="margin-top:14px;">
+        <button id="disconnectBtn" class="ghost hidden">Disconnect</button>
+      </div>
+      <details>
+        <summary>Device log</summary>
+        <pre id="log" class="log">(idle)</pre>
+      </details>
+    </div>
+
+    <div id="result"></div>
+  </main>
+
+  <script type="module">
+    import { verifyRecord, bytesToHex } from "/verifier.js";
+
+    const API = "https://api.zknot.io";
+
+    // pubkey source — bundled today, swap to api.zknot.io lookup later (one function)
+    const BUNDLED_PUBKEYS = {
+      "01234DF53F8AF547EE":
+        "683a08ef83be128fb1640ecb9c21f0f474e1dc2e29b7d9332c68fa0a05644b8310004516c96225a85e329cdf5f882e1f4bdadb22076ff2b8ac176810fc4909eb",
+    };
+    function pubkeyForSerial(serial) {
+      const xy = BUNDLED_PUBKEYS[String(serial).toUpperCase()];
+      return xy ? "04" + xy : null;
+    }
+
+    const el = (id) => document.getElementById(id);
+    const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+
+    let port=null, reader=null, writer=null, lineBuf="";
+    let docHashHex=null, challengeHex=null, fileName=null;
+    let deviceReady=false, awaiting=false, resendTimer=null;
+
+    function logLine(dir, text){
+      const pre=el("log");
+      if(pre.textContent==="(idle)") pre.textContent="";
+      pre.textContent += `${new Date().toLocaleTimeString()}  ${dir}  ${text}\n`;
+      pre.scrollTop=pre.scrollHeight;
+    }
+    function setStatus(t,k){ el("statusText").textContent=t; el("dot").className="dot"+(k?" "+k:""); }
+
+    if(!("serial" in navigator)){
+      el("unsupported").classList.remove("hidden");
+    } else {
+      el("file-card").classList.remove("hidden");
+      el("connect-card").classList.remove("hidden");
+      el("connectBtn").addEventListener("click", connect);
+      el("disconnectBtn").addEventListener("click", disconnect);
+      wireDrop();
+    }
+
+    function wireDrop(){
+      const drop=el("drop"), input=el("fileInput");
+      drop.addEventListener("click", ()=>input.click());
+      input.addEventListener("change", ()=>{ if(input.files[0]) onFile(input.files[0]); });
+      ["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("over");}));
+      ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("over");}));
+      drop.addEventListener("drop",e=>{ const f=e.dataTransfer.files[0]; if(f) onFile(f); });
+    }
+
+    async function onFile(file){
+      el("result").innerHTML="";
+      fileName=file.name;
+      const buf=await file.arrayBuffer();
+      const docHashBuf=await crypto.subtle.digest("SHA-256", buf);
+      docHashHex=bytesToHex(new Uint8Array(docHashBuf));
+      const challengeBuf=await crypto.subtle.digest("SHA-256", docHashBuf);
+      challengeHex=bytesToHex(new Uint8Array(challengeBuf));
+      el("filemeta").classList.remove("hidden");
+      el("filemeta").innerHTML=`<b>${esc(file.name)}</b> · ${file.size} bytes<br>SHA-256: ${docHashHex}`;
+      maybeSign();
+    }
+
+    async function connect(){
+      try{
+        port=await navigator.serial.requestPort();
+        await port.open({baudRate:115200});
+      }catch(e){ setStatus("No port selected","err"); return; }
+      writer=port.writable.getWriter();
+      deviceReady=true;
+      el("connectBtn").disabled=true;
+      el("disconnectBtn").classList.remove("hidden");
+      setStatus("Connected","live");
+      readLoop();
+      setTimeout(maybeSign, 1000);
+    }
+
+    async function readLoop(){
+      reader=port.readable.getReader();
+      const dec=new TextDecoder();
+      try{
+        while(true){
+          const {value,done}=await reader.read();
+          if(done) break;
+          lineBuf+=dec.decode(value,{stream:true});
+          let nl;
+          while((nl=lineBuf.indexOf("\n"))>=0){
+            const line=lineBuf.slice(0,nl).replace(/\r$/,"").trim();
+            lineBuf=lineBuf.slice(nl+1);
+            if(line){ logLine("RX",line); handleLine(line); }
+          }
+        }
+      }catch(e){}
+    }
+
+    async function sendLine(s){ if(writer){ await writer.write(new TextEncoder().encode(s+"\n")); logLine("TX",s); } }
+
+    function maybeSign(){
+      if(!(docHashHex && deviceReady) || awaiting) return;
+      awaiting=true;
+      el("pressHint").classList.remove("hidden");
+      setStatus("Waiting for button press…","wait");
+      sendLine(challengeHex);
+      let tries=0;
+      if(resendTimer) clearInterval(resendTimer);
+      resendTimer=setInterval(()=>{ if(!awaiting||tries++>=40){clearInterval(resendTimer);return;} sendLine(challengeHex); },1500);
+    }
+
+    function handleLine(line){
+      if(line.includes("BOOT")){ if(challengeHex && awaiting) sendLine(challengeHex); }
+      const m=line.match(/SIG\s+([0-9A-Fa-f]+)\s+([0-9a-fA-F]{64})\s+([0-9a-fA-F]{128})/);
+      if(!m) return;
+      const serial=m[1], chEcho=m[2], sigHex=m[3];
+      if(!awaiting) return;
+      if(chEcho.toLowerCase()!==challengeHex.toLowerCase()){
+        logLine("!!","device signed a different challenge (waiting on the current one)"); return;
+      }
+      awaiting=false;
+      if(resendTimer) clearInterval(resendTimer);
+      onSignature(serial, sigHex);
+    }
+
+    async function onSignature(serial, sigHex){
+      setStatus("Signed — verifying & issuing…","live");
+      const pub=pubkeyForSerial(serial);
+      if(!pub){ renderFail("Device "+serial+" is not in the enrolled key set; cannot issue."); return; }
+
+      // local fail-closed check before we issue anything
+      const rec={record_version:"1.0",identity_tier:"SELF-ASSERTED",presence_binding_type:"firmware-mediated",
+                 content_binding_type:"none",device_id:serial,signed_payload_hex:docHashHex,
+                 challenge_hash:challengeHex,signature:sigHex,public_key:pub};
+      const r=await verifyRecord(rec);
+      if(r.verdict!=="VERIFIED_CLIENT_SIDE"){ renderFail("Local verification failed: "+r.headline); return; }
+
+      const ingest={
+        artifact_id: crypto.randomUUID(),
+        artifact_type:"ZKEY_SIGN",
+        device_id: serial,
+        challenge_hash: challengeHex,
+        signature: sigHex,
+        public_key: pub,
+        signed_at: new Date().toISOString(),
+        metadata:{ product:"Rev2-Attestor", document_name:fileName, document_sha256:docHashHex,
+                   signed_payload_hex:docHashHex, identity_tier:"SELF-ASSERTED",
+                   presence_binding_type:"firmware-mediated", content_binding_type:"none" },
+      };
+      try{
+        const resp=await postAttest(ingest);
+        setStatus("Connected","live");
+        renderResult(resp);
+      }catch(e){
+        renderFail("Issuance failed: "+e.message+". The signature is valid locally; the record was not chained.");
+        setStatus("Connected","live");
+      }
+    }
+
+    async function postAttest(ingest){
+      const res=await fetch(`${API}/v1/attest`,{
+        method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(ingest)
+      });
+      if(!res.ok) throw new Error("HTTP "+res.status+" "+(await res.text()).slice(0,200));
+      return res.json();
+    }
+
+    function renderResult(resp){
+      const zk=resp.short_code;
+      const pos=resp.chain_position;
+      el("result").innerHTML=`
+        <div class="verdict ok">
+          <h2>Attested &amp; chained</h2>
+          <div class="zk">${esc(zk)}</div>
+          <dl class="kv">
+            <dt>Document</dt><dd>${esc(fileName)}</dd>
+            <dt>Doc SHA-256</dt><dd>${esc(docHashHex)}</dd>
+            <dt>Device</dt><dd>${esc(resp.device_id)} (SELF-ASSERTED · firmware-mediated)</dd>
+            <dt>Chain pos</dt><dd>${esc(String(pos))}</dd>
+            <dt>Signed at</dt><dd>${esc(resp.signed_at)}</dd>
+          </dl>
+          <div class="row">
+            <a class="primary" style="text-decoration:none;display:inline-block" href="/v/${encodeURIComponent(zk)}" target="_blank">Verify on verifyknot →</a>
+            <button id="certBtn" class="ghost">Download certificate</button>
+          </div>
+        </div>
+        <p class="honesty">The timestamp is host-supplied (the device has no clock); ordering is
+          anchored by the chain position. Keep the original file — the record proves a file with
+          this hash was attested, but cannot reproduce the file itself.</p>`;
+      el("certBtn").addEventListener("click", ()=>downloadCert(resp));
+    }
+
+    function renderFail(msg){
+      el("result").innerHTML=`<div class="verdict fail"><h2>Not issued</h2><p>${esc(msg)}</p></div>`;
+    }
+
+    function downloadCert(resp){
+      const zk=resp.short_code;
+      const md=`# ZKNOT Attestation Certificate
+
+**ZK number: ${zk}**  →  https://verifyknot.io/v/${zk}
+
+- Document: ${fileName}
+- Document SHA-256: ${docHashHex}
+- Signed by device: ${resp.device_id}  (SELF-ASSERTED · firmware-mediated presence)
+- Chain position: ${resp.chain_position}
+- Attested: ${resp.signed_at}
+
+## What this proves
+A signature was produced by device ${resp.device_id}'s non-extractable key over the SHA-256
+hash of this exact document. It proves the document existed in this exact form at the time
+above and was approved by this device, unaltered since. It does NOT assert the document's
+contents are correct, nor the real-world identity of the signer.
+
+## How a skeptic verifies it — without trusting ZKNOT
+1. Hash your copy:  sha256sum "${fileName}"
+2. Confirm it equals the Document SHA-256 above.
+3. Look up ${zk} at https://verifyknot.io/v/${zk} — the signature is verified in your browser.
+
+The timestamp is host-supplied (no device clock); ordering is anchored by the chain position.
+Tier-0 / AP-1. The verifier states exactly what was proven, and no more.
+
+Page 1 of 1
+`;
+      const blob=new Blob([md],{type:"text/markdown"});
+      const a=document.createElement("a");
+      a.href=URL.createObjectURL(blob);
+      a.download=`${fileName}.zkcert.md`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    async function disconnect(){
+      awaiting=false; deviceReady=false;
+      if(resendTimer) clearInterval(resendTimer);
+      try{ if(reader){ await reader.cancel(); reader.releaseLock(); } }catch{}
+      try{ if(writer){ writer.releaseLock(); } }catch{}
+      try{ if(port){ await port.close(); } }catch{}
+      port=reader=writer=null;
+      el("connectBtn").disabled=false;
+      el("disconnectBtn").classList.add("hidden");
+      el("pressHint").classList.add("hidden");
+      setStatus("Disconnected");
+    }
+  </script>
+</body>
+</html>
