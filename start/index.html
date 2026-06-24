@@ -151,16 +151,29 @@
     // live, replace the body of pubkeyForSerial with a fetch to api.zknot.io and
     // nothing else on this page changes.
     const BUNDLED_PUBKEYS = {
-      // serial : slot-0 P256 public key X||Y (128 hex, from the provisioning ledger)
-      "01234DF53F8AF547EE":
+      "012337d1a9f0eb45ee":
+        "fc9e498d9a69f93a3f2bb5902faf4b33c83a1ae668a12260c24c528916819d28d3f07c20b80483228e2ce36fbe1508f0e335d0cabdc42f48e7da7b9b30bd6289",
+      "0123fc0bbdc63b4dee":
+        "b4def69ee966b79a4dbea20c1cb2fab5baebc9b2a17037a969cebc9d779e8621f8cc8e41c32d774254bfc9b274e126e4a145a82c6e1e62c2541460e2c82725a5",
+      "01231e45e5c5b0f8ee":
+        "c326087a8832be1e0b93a2ad96c79b1e3675644c0c3b65291fb9450cd20444a610922a94581242e979fc25e12021c7f70506de26e106807d7116efa4364c4077",
+      "0123c9eaa2bdd913ee":
+        "2210f2572607d05b45738ff7d47b48c1fa7845a79c8d1eb2097d9710a22c8e89796d4da3c9fdad3a1f6a78b6837f3a7e87269eda191017b6d78a727a869bb215",
+      "01234df53f8af547ee":
         "683a08ef83be128fb1640ecb9c21f0f474e1dc2e29b7d9332c68fa0a05644b8310004516c96225a85e329cdf5f882e1f4bdadb22076ff2b8ac176810fc4909eb",
+      "0123927f68f8c91fee":
+        "f18259c2fa4b375bae80c4bb4871c9aec8c2187df863cb71ba950aaef417b4d9192916b2e4b0dc6c98d9c588d00106e41fc77fdf01b99985e86d5ee9d7d8ed1a",
+      "0123d8623398c140ee":
+        "61b9718fa46028820b7255a9f07a5305d2bf1d20235be776e0fff2eff50f4efa9bca24d91f83bad1eef26789d29fc4b6d3819fcdaf06ab2c099fe68690249a89",
+      "0123046da0a2f3b8ee":
+        "06aa548bda1e5e91dfdfdc47d15e6185cd0937e3f43ead61700c20ccc3e3d6100f6856481a5a63e5cc09ac5e40befcd6ae2562bbfd230226165662f89e7a3ac8",
     };
     async function pubkeyForSerial(serial) {
       // LIVE VERSION (later):
       //   const r = await fetch(`https://api.zknot.io/v1/device/${serial}/pubkey`);
       //   if (!r.ok) return null;
       //   return "04" + (await r.json()).public_key;   // -> uncompressed SEC1
-      const xy = BUNDLED_PUBKEYS[String(serial).toUpperCase()];
+      const xy = BUNDLED_PUBKEYS[String(serial).toLowerCase()];
       return xy ? "04" + xy : null;                     // 04||X||Y, 65 bytes
     }
 
