@@ -21,8 +21,75 @@
  * record_version fail closed with an honest "unknown version" (VER-10).
  */
 
-/** Supported record versions (VER-10). */
-const SUPPORTED_VERSIONS = ["1.0"];
+/** Supported record versions (VER-10). "v1" is the TrustSeal / registry-signed
+ *  generation; it uses the SAME format-blind crypto (VER-20 + VER-11), so it
+ *  needs no new verification math — only this allowlist entry + tier vocab. */
+const SUPPORTED_VERSIONS = ["1.0", "v1"];
+
+/**
+ * IDENTITY-TIER VOCABULARY (VER-04 honest translation).
+ *
+ * The scalable shape: a new product or tier is a new ROW here, not a code
+ * branch elsewhere. Each row says, in plain language, what the tier PROVES,
+ * what it explicitly DOES NOT prove, and how a skeptic ANCHORS trust for it.
+ * The verifier never claims more than the row allows.
+ *
+ * @typedef {Object} TierInfo
+ * @property {string} label           display label
+ * @property {string} proves          what a verified signature at this tier establishes
+ * @property {string} does_not_prove  the limits — what it explicitly does NOT establish
+ * @property {string} anchor          how a skeptic independently grounds trust here
+ *
+ * @type {Record<string, TierInfo>}
+ */
+const TIER_VOCAB = {
+  "SELF-ASSERTED": {
+    label: "SELF-ASSERTED",
+    proves: "A signature exists that verifies against the public key carried in this record.",
+    does_not_prove: "Nothing about WHO holds that key. The owner is whoever the record claims; no independent party vouches for it.",
+    anchor: "None beyond the record itself. Trust rests entirely on the carried key's own claim.",
+  },
+  "registry-asserted": {
+    label: "REGISTRY-ASSERTED",
+    proves: "The record was signed by ZKNOT's published registry key (signer id = device_id, e.g. zknot-registry-v1). The registry vouches that this registration exists and has not been altered.",
+    does_not_prove: "That an independent device with its own secure element signed it. It is NOT a device-held key and NOT a human-presence event.",
+    anchor: "Verify the carried public key against ZKNOT's published registry public key, obtained out-of-band.",
+  },
+  "REGISTERED": {
+    label: "REGISTERED",
+    proves: "The signing device's own keypair is on file in the ZKNOT registry.",
+    does_not_prove: "An X.509 CA certificate chain. No cert chain was verified.",
+    anchor: "The device's public key as recorded in the ZKNOT registry.",
+  },
+  // "CA-ATTESTED" is intentionally NOT listed: it is gated/reserved until the
+  // cert-chain provisioning SOP is confirmed live. An incoming "CA-ATTESTED"
+  // record therefore falls to TIER_DEFAULT (treated as unverified identity)
+  // rather than rendering a claim we cannot yet stand behind.
+};
+
+/** Safe fallback for any tier this verifier does not recognize. @type {TierInfo} */
+const TIER_DEFAULT = {
+  label: "UNVERIFIED",
+  proves: "A signature verifies against the carried key — the math ran and passed.",
+  does_not_prove: "Anything about identity. This tier is unrecognized by this verifier.",
+  anchor: "None. Unrecognized tier — treat the identity as unverified.",
+};
+
+/**
+ * Resolve a record's identity_tier to its vocabulary row. Exact match first,
+ * then a case-insensitive match, else the safe default.
+ * @param {Partial<VerifyRecord>} rec
+ * @returns {TierInfo & {key: string}}
+ */
+function tierOf(rec) {
+  const tier = rec.identity_tier ?? "SELF-ASSERTED";
+  if (Object.prototype.hasOwnProperty.call(TIER_VOCAB, tier)) {
+    return { key: tier, ...TIER_VOCAB[tier] };
+  }
+  const hit = Object.keys(TIER_VOCAB).find((k) => k.toLowerCase() === tier.toLowerCase());
+  if (hit) return { key: hit, ...TIER_VOCAB[hit] };
+  return { key: tier, ...TIER_DEFAULT };
+}
 
 /**
  * @typedef {Object} VerifyRecord
@@ -146,7 +213,7 @@ async function importP256(pubkeyRaw) {
  *   verdict: "VERIFIED_CLIENT_SIDE" | "FAILED" | "CANNOT_VERIFY",
  *   checks: {id: string, pass: boolean|null, detail: string}[],
  *   headline: string,
- *   badges: {identity: string, presence: string, content: string},
+ *   badges: {identity: string, identity_label?: string, proves?: string, does_not_prove?: string, anchor?: string, signer?: string, presence: string, content: string},
  *   server_discrepancy: string|null
  * }>}
  */
@@ -216,12 +283,13 @@ export async function verifyRecord(rec) {
   if (!sigOk) return fail("Cryptographically invalid: the signature does not verify.");
 
   // VER-13 honesty note — this generation has no chain to the HSM root.
+  // Sourced from TIER_VOCAB so the note never claims more than the tier allows
+  // and stays consistent with the badges/headline below.
+  const t13 = tierOf(rec);
   checks.push({
     id: "VER-13",
     pass: null,
-    detail: rec.identity_tier === "REGISTERED"
-      ? "identity tier REGISTERED: the key is asserted as known to the ZKNOT registry — that assertion is the server's, not this math's. No cert chain was verified."
-      : "identity tier SELF-ASSERTED: the key's owner is whoever the record claims. Nothing about identity was cryptographically proven.",
+    detail: `identity tier ${t13.label}: proves — ${t13.proves} Does NOT prove — ${t13.does_not_prove} Anchor — ${t13.anchor}`,
   });
 
   return {
@@ -236,7 +304,14 @@ export async function verifyRecord(rec) {
 /** VER-04 honest translation — the headline never exceeds the binding fields. */
 function headlineOf(/** @type {Partial<VerifyRecord>} */ rec) {
   const dev = rec.device_id ?? "unknown device";
-  let s = `A valid ECDSA signature over this exact payload was verified in your browser, attributed to ${dev} (${rec.identity_tier ?? "SELF-ASSERTED"}).`;
+  const t = tierOf(rec);
+  let s;
+  if (t.key === "registry-asserted") {
+    const signer = rec.device_id ?? "unknown signer";
+    s = `A valid ECDSA signature over this exact payload was verified in your browser, signed by ZKNOT's registry key '${signer}' (REGISTRY-ASSERTED) — the registry vouches for this registration; it is not a device-held key.`;
+  } else {
+    s = `A valid ECDSA signature over this exact payload was verified in your browser, attributed to ${dev} (${t.label}).`;
+  }
   if (rec.presence_binding_type === "secure-domain") s += " A human press was enforced inside the secure enclave.";
   else if (rec.presence_binding_type === "hardware-interlock") s += " A human press was enforced by an electrical interlock.";
   else if (rec.presence_binding_type === "firmware-mediated") s += " A human press was enforced by device firmware (firmware-trust, not silicon).";
@@ -248,8 +323,17 @@ function headlineOf(/** @type {Partial<VerifyRecord>} */ rec) {
 }
 
 function badgesOf(/** @type {Partial<VerifyRecord>} */ rec) {
+  const t = tierOf(rec);
   return {
-    identity: rec.identity_tier ?? "SELF-ASSERTED",
+    // Back-compat: the current UI reads `identity` as a plain string.
+    identity: t.label,
+    // Self-explaining identity block: a skeptic reads exactly what the tier
+    // means and what it does NOT mean, with no prior knowledge of the ladder.
+    identity_label: t.label,
+    proves: t.proves,
+    does_not_prove: t.does_not_prove,
+    anchor: t.anchor,
+    signer: rec.device_id ?? "unknown",
     presence: rec.presence_binding_type ?? "none",
     content: rec.content_binding_type ?? "none",
   };

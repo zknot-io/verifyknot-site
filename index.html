@@ -527,6 +527,22 @@
               <div class="field-val" id="rIdentity">—</div>
             </div>
             <div class="field-row">
+              <div class="field-key">Signer</div>
+              <div class="field-val" id="rSigner">—</div>
+            </div>
+            <div class="field-row">
+              <div class="field-key">Proves</div>
+              <div class="field-val" id="rProves" style="white-space:normal;word-break:normal">—</div>
+            </div>
+            <div class="field-row">
+              <div class="field-key">Does not prove</div>
+              <div class="field-val" id="rDoesNotProve" style="white-space:normal;word-break:normal">—</div>
+            </div>
+            <div class="field-row">
+              <div class="field-key">Anchor</div>
+              <div class="field-val" id="rAnchor" style="white-space:normal;word-break:normal">—</div>
+            </div>
+            <div class="field-row">
               <div class="field-key">Presence binding</div>
               <div class="field-val" id="rPresence">—</div>
             </div>
@@ -588,6 +604,10 @@
     }
     $('rHeadline').textContent = r.headline;
     $('rIdentity').textContent = r.badges.identity;
+    $('rSigner').textContent = r.badges.signer || '—';
+    $('rProves').textContent = r.badges.proves || '—';
+    $('rDoesNotProve').textContent = r.badges.does_not_prove || '—';
+    $('rAnchor').textContent = r.badges.anchor || '—';
     $('rPresence').textContent = r.badges.presence;
     $('rContent').textContent = r.badges.content;
     const ul = $('rChecks'); ul.innerHTML = '';
