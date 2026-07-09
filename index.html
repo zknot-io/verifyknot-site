@@ -489,6 +489,23 @@
           <div class="field-row" id="rHeadlineRow" style="display:block;padding:10px 0">
             <div class="field-val" id="rHeadline" style="white-space:normal">—</div>
           </div>
+
+          <!-- HashStamp document-timestamp view (Option 3): shown only for doc-timestamp
+               records; leads with the file, bypassing the identity-binding grid. -->
+          <div id="docCard" style="display:none;border:1px solid rgba(34,197,94,.35);border-radius:10px;padding:16px;margin:12px 0;background:rgba(34,197,94,.05)">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+              <span style="font-size:22px" aria-hidden="true">📄</span>
+              <div style="font-weight:600;font-size:15px;word-break:break-all" id="dcFilename">—</div>
+              <span id="dcBadge" style="margin-left:auto;font-size:12px;font-weight:700;letter-spacing:.02em;border:1px solid;border-radius:20px;padding:3px 10px;white-space:nowrap">✓ VERIFIED</span>
+            </div>
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:13px">
+              <div style="opacity:.55">SHA-256</div><div class="hash" id="dcHash" style="word-break:break-all">—</div>
+              <div style="opacity:.55">Stamped</div><div id="dcStamped">—</div>
+              <div style="opacity:.55">Chain</div><div id="dcChain">—</div>
+            </div>
+            <div style="margin-top:14px;font-size:12px;line-height:1.55;opacity:.72" id="dcNote">—</div>
+          </div>
+
           <div class="result-fields">
             <div class="field-row">
               <div class="field-key">Short Code</div>
@@ -522,11 +539,11 @@
               <div class="field-key">Artifact Hash</div>
               <div class="field-val hash" id="rHash">—</div>
             </div>
-            <div class="field-row">
+            <div class="field-row binding-row">
               <div class="field-key">Identity</div>
               <div class="field-val" id="rIdentity">—</div>
             </div>
-            <div class="field-row">
+            <div class="field-row binding-row">
               <div class="field-key">Signer</div>
               <div class="field-val" id="rSigner">—</div>
             </div>
@@ -542,11 +559,11 @@
               <div class="field-key">Anchor</div>
               <div class="field-val" id="rAnchor" style="white-space:normal;word-break:normal">—</div>
             </div>
-            <div class="field-row">
+            <div class="field-row binding-row">
               <div class="field-key">Presence binding</div>
               <div class="field-val" id="rPresence">—</div>
             </div>
-            <div class="field-row">
+            <div class="field-row binding-row">
               <div class="field-key">Content binding</div>
               <div class="field-val" id="rContent">—</div>
             </div>
@@ -603,6 +620,33 @@
       $('rStatusText').textContent = 'CANNOT VERIFY — RECORD DATA INCOMPLETE';
     }
     $('rHeadline').textContent = r.headline;
+
+    // HashStamp document-timestamp view (Option 3): lead with the file card and
+    // hide the identity/presence/content rows that read as "none" federal noise.
+    const isDoc = r.kind === 'document_timestamp' && !!r.docTimestamp;
+    const doc = $('docCard');
+    const bindingRows = document.querySelectorAll('.binding-row');
+    if (isDoc) {
+      const dt = r.docTimestamp;
+      $('dcFilename').textContent = dt.filename || '(unnamed file)';
+      $('dcHash').textContent = dt.file_sha256 || '—';
+      $('dcStamped').textContent = dt.stamped_at ? new Date(dt.stamped_at).toISOString() : '—';
+      $('dcChain').textContent =
+        (dt.chain_position != null ? `Position ${dt.chain_position}` : 'position unknown') +
+        (dt.chain_integrity === true ? ' · chain intact' : '');
+      const badge = $('dcBadge');
+      const style = (color, tint) => { badge.style.color = color; badge.style.borderColor = color; doc.style.borderColor = tint; doc.style.background = tint.replace('.35', '.05'); };
+      if (r.verdict === 'VERIFIED_CLIENT_SIDE') { badge.textContent = '✓ VERIFIED'; style('#22c55e', 'rgba(34,197,94,.35)'); }
+      else if (r.verdict === 'FAILED') { badge.textContent = '✗ FAILED'; style('#ef4444', 'rgba(239,68,68,.35)'); }
+      else { badge.textContent = '⚠ CANNOT VERIFY'; style('#f59e0b', 'rgba(245,158,11,.35)'); }
+      $('dcNote').textContent = 'Proof that this exact file existed at the stamped time: its fingerprint was signed by the HashStamp service key and locked into the append-only chain. Tamper-evident — change one byte of the file and this fingerprint no longer matches. It does not identify who created or submitted the file.';
+      doc.style.display = 'block';
+      bindingRows.forEach((el) => { el.style.display = 'none'; });
+    } else {
+      doc.style.display = 'none';
+      bindingRows.forEach((el) => { el.style.display = ''; });
+    }
+
     $('rIdentity').textContent = r.badges.identity;
     $('rSigner').textContent = r.badges.signer || '—';
     $('rProves').textContent = r.badges.proves || '—';

@@ -76,6 +76,36 @@ const TIER_DEFAULT = {
 };
 
 /**
+ * DOCUMENT-TIMESTAMP vocabulary (VER-04 honest translation for HashStamp).
+ * A doc-timestamp is NOT an identity tier — it proves a file existed at a time,
+ * signed by a service key. Its honest scope is deliberately narrow: existence +
+ * time, never authorship, presence, or content-binding. Copy stays within the
+ * HASHSTAMP-VERIFY-HANDOFF-001 claim guardrail ("tamper-evident", not "-proof").
+ * @type {TierInfo}
+ */
+const DOC_TIMESTAMP_INFO = {
+  label: "DOCUMENT-TIMESTAMP",
+  proves: "The file with the SHA-256 fingerprint below was submitted to HashStamp, its fingerprint was signed by ZKNOT's HashStamp service key, and it was recorded at an immutable position in the append-only chain at the stamped time.",
+  does_not_prove: "Who created, owned, or uploaded the file; that any specific person was present; or that a human was shown the content. It is tamper-evident, not tamper-proof — anyone holding the file can recompute this same fingerprint.",
+  anchor: "Recompute SHA-256 of your own copy of the file and confirm it equals the fingerprint below; your browser has already re-verified the service-key signature over that fingerprint.",
+};
+
+/**
+ * Is this a HashStamp document-timestamp record? Such records verify over the
+ * file fingerprint directly (no reconstructable signed_payload), so they take a
+ * dedicated path instead of failing the generic "incomplete data" check.
+ * Primary signal: kind === "document_timestamp" (set by the Worker). Structural
+ * fallback: a file fingerprint present, no signed_payload, no binding claims.
+ * @param {Partial<VerifyRecord>} rec
+ */
+function isDocTimestamp(rec) {
+  if (rec.kind === "document_timestamp") return true;
+  return !!rec.file_sha256 && !rec.signed_payload_hex
+    && (rec.presence_binding_type ?? "none") === "none"
+    && (rec.content_binding_type ?? "none") === "none";
+}
+
+/**
  * Resolve a record's identity_tier to its vocabulary row. Exact match first,
  * then a case-insensitive match, else the safe default.
  * @param {Partial<VerifyRecord>} rec
@@ -104,6 +134,16 @@ function tierOf(rec) {
  * @property {string} signature              hex; raw r||s (64B) or DER
  * @property {string} public_key             hex; uncompressed SEC1 (04||X||Y, 65B)
  * @property {{name?: string, sha256?: string}=} artifact
+ * -- HashStamp document-timestamp records (no reconstructable signed_payload;
+ *    the signed message IS the file fingerprint) carry these instead: --
+ * @property {string=} kind             "document_timestamp" when set by the Worker
+ * @property {string=} file_sha256      hex; the raw 32-byte file SHA-256 — the signed message
+ * @property {string=} filename         original file name (display only)
+ * @property {string=} stamped_at       ISO time the fingerprint was stamped
+ * @property {number=} chain_position   append-only chain index
+ * @property {boolean=} chain_integrity server-reported chain-intact flag (displayed as data)
+ * @property {string=} product          e.g. "hashstamp"
+ * @property {string=} signed_at        ISO time the record was signed
  */
 
 /**
@@ -127,6 +167,15 @@ export function mapApiResponse(api) {
     signature: api.signature,
     public_key: api.public_key,
     artifact: api.artifact,
+    // HashStamp document-timestamp fields (live shape nests these under metadata)
+    kind: api.metadata?.kind ?? api.kind,
+    file_sha256: api.metadata?.file_sha256 ?? api.file_sha256,
+    filename: api.metadata?.filename ?? api.filename,
+    stamped_at: api.metadata?.stamped_at ?? api.signed_at,
+    product: api.metadata?.product ?? api.product,
+    chain_position: api.chain_position,
+    chain_integrity: api.chain_integrity,
+    signed_at: api.signed_at,
     server_asserted_verified: api.verified, // captured ONLY to detect discrepancy
   };
 }
@@ -214,7 +263,9 @@ async function importP256(pubkeyRaw) {
  *   checks: {id: string, pass: boolean|null, detail: string}[],
  *   headline: string,
  *   badges: {identity: string, identity_label?: string, proves?: string, does_not_prove?: string, anchor?: string, signer?: string, presence: string, content: string},
- *   server_discrepancy: string|null
+ *   server_discrepancy: string|null,
+ *   kind?: string,
+ *   docTimestamp?: {filename: string|null, file_sha256: string|null, stamped_at: string|null, chain_position: number|null, chain_integrity: boolean|null, product: string|null}
  * }>}
  */
 export async function verifyRecord(rec) {
@@ -240,6 +291,13 @@ export async function verifyRecord(rec) {
     checks.push({ id: "VER-10", pass: false, detail: `record_version "${rec.record_version}" not supported by this verifier (supports: ${SUPPORTED_VERSIONS.join(", ")})` });
     return cannot("This record declares a version this verifier does not understand. No verdict.");
   }
+
+  // HashStamp document-timestamp records verify over the file fingerprint, not a
+  // reconstructable signed_payload. Route them to their own honest path BEFORE
+  // the generic completeness check below (which would otherwise fail them for a
+  // missing signed_payload_hex they are not supposed to carry). VER-04/Option 1.
+  if (isDocTimestamp(rec)) return verifyDocTimestamp(rec);
+
   for (const f of ["signed_payload_hex", "challenge_hash", "signature", "public_key"]) {
     if (!(/** @type {any} */ (rec))[f]) {
       checks.push({ id: "VER-10", pass: false, detail: `missing field: ${f} — record data is incomplete, cannot reproduce the check` });
@@ -299,6 +357,133 @@ export async function verifyRecord(rec) {
     badges: badgesOf(rec),
     server_discrepancy: discrepancy(rec, true),
   };
+}
+
+/**
+ * Doc-timestamp verify path (HashStamp / Option 1). The Worker signs the raw
+ * 32-byte file hash via WebCrypto, which internally computes
+ * SHA-256(fileHashBytes) = challenge_hash and signs THAT. So we reproduce the
+ * check in-browser by feeding WebCrypto the PRE-IMAGE (file_sha256 bytes) and
+ * letting it hash once — no prehashed-verify support needed. Never throws on a
+ * verification failure; returns a specific honest reason instead (VER-26).
+ * @param {Partial<VerifyRecord> & {server_asserted_verified?: boolean}} rec
+ */
+async function verifyDocTimestamp(rec) {
+  /** @type {{id: string, pass: boolean|null, detail: string}[]} */
+  const checks = [];
+  const cannot = (/** @type {string} */ headline) => ({
+    verdict: /** @type {const} */ ("CANNOT_VERIFY"), kind: "document_timestamp",
+    checks, headline, badges: docBadges(rec), docTimestamp: docFields(rec),
+    server_discrepancy: discrepancy(rec, null),
+  });
+  const fail = (/** @type {string} */ headline) => ({
+    verdict: /** @type {const} */ ("FAILED"), kind: "document_timestamp",
+    checks, headline, badges: docBadges(rec), docTimestamp: docFields(rec),
+    server_discrepancy: discrepancy(rec, false),
+  });
+
+  // DT-10 — the data needed to reproduce a doc-timestamp check is present.
+  for (const f of ["file_sha256", "challenge_hash", "signature", "public_key"]) {
+    if (!(/** @type {any} */ (rec))[f]) {
+      checks.push({ id: "DT-10", pass: false, detail: `missing field: ${f} — cannot reproduce the timestamp check` });
+      return cannot("This document-timestamp record does not carry the data needed to reproduce the check in your browser. No verdict.");
+    }
+  }
+  checks.push({ id: "DT-10", pass: true, detail: "document-timestamp record; file fingerprint, signature and key present" });
+
+  let fileHash, expectedHash, sigRaw, pubRaw;
+  try {
+    fileHash = hexToBytes(/** @type {string} */ (rec.file_sha256));
+    expectedHash = hexToBytes(/** @type {string} */ (rec.challenge_hash));
+    sigRaw = signatureToRaw(hexToBytes(/** @type {string} */ (rec.signature)));
+    pubRaw = hexToBytes(/** @type {string} */ (rec.public_key));
+  } catch (e) {
+    checks.push({ id: "DT-10", pass: false, detail: `encoding error: ${/** @type {Error} */ (e).message}` });
+    return cannot("Record fields are malformed; the check cannot be reproduced. No verdict.");
+  }
+  if (fileHash.length !== 32) {
+    checks.push({ id: "DT-10", pass: false, detail: `file_sha256 is ${fileHash.length} bytes, expected 32 — not a valid SHA-256 fingerprint` });
+    return fail("Cryptographically invalid: the file fingerprint is not a 32-byte SHA-256.");
+  }
+
+  // DT-20 — the on-chain challenge_hash IS SHA-256 of the file fingerprint.
+  // This ties the chain entry to this exact file, independent of the signature.
+  const computedHash = new Uint8Array(await subtle.digest("SHA-256", /** @type {BufferSource} */ (fileHash)));
+  const hashOk = bytesToHex(computedHash) === bytesToHex(expectedHash);
+  checks.push({ id: "DT-20", pass: hashOk, detail: hashOk ? "SHA-256(file fingerprint) recomputed in this browser matches the chain's challenge_hash" : "challenge_hash does NOT match SHA-256 of the file fingerprint — record is internally inconsistent" });
+  if (!hashOk) return fail("Cryptographically invalid: the chain entry's hash does not match this file's fingerprint.");
+
+  // DT-11 — the service key signed this exact file fingerprint (WebCrypto hashes
+  // the pre-image once, so verifying over fileHash checks the signature over
+  // SHA-256(fileHash) = challenge_hash).
+  let sigOk = false;
+  try {
+    const key = await importP256(pubRaw);
+    sigOk = await subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      key,
+      /** @type {BufferSource} */ (sigRaw),
+      /** @type {BufferSource} */ (fileHash)
+    );
+  } catch (e) {
+    checks.push({ id: "DT-11", pass: false, detail: `key import / verify error: ${/** @type {Error} */ (e).message}` });
+    return cannot("The public key could not be imported; the signature check could not run. No verdict.");
+  }
+  checks.push({ id: "DT-11", pass: sigOk, detail: sigOk ? "ECDSA P-256 signature verified in this browser — the HashStamp service key signed this file's fingerprint" : "signature does NOT verify against the carried public key" });
+  if (!sigOk) return fail("Cryptographically invalid: the signature does not verify over this file's fingerprint.");
+
+  // DT-13 honesty note — narrow, existence-and-time scope. Never more.
+  checks.push({
+    id: "DT-13", pass: null,
+    detail: `document timestamp: proves — ${DOC_TIMESTAMP_INFO.proves} Does NOT prove — ${DOC_TIMESTAMP_INFO.does_not_prove} Anchor — ${DOC_TIMESTAMP_INFO.anchor}`,
+  });
+
+  return {
+    verdict: /** @type {const} */ ("VERIFIED_CLIENT_SIDE"), kind: "document_timestamp",
+    checks, headline: docHeadline(rec), badges: docBadges(rec), docTimestamp: docFields(rec),
+    server_discrepancy: discrepancy(rec, true),
+  };
+}
+
+/** File-centric facts for the freelancer-legible view (Option 3). */
+function docFields(/** @type {Partial<VerifyRecord>} */ rec) {
+  return {
+    filename: rec.filename ?? null,
+    file_sha256: rec.file_sha256 ?? null,
+    stamped_at: rec.stamped_at ?? rec.signed_at ?? null,
+    chain_position: rec.chain_position ?? null,
+    chain_integrity: rec.chain_integrity ?? null,
+    product: rec.product ?? null,
+  };
+}
+
+/** Honest badges for a doc-timestamp — reuses the generic badge shape so the
+ *  existing UI keeps working, but the identity IS the narrow doc-timestamp scope. */
+function docBadges(/** @type {Partial<VerifyRecord>} */ rec) {
+  return {
+    identity: DOC_TIMESTAMP_INFO.label,
+    identity_label: DOC_TIMESTAMP_INFO.label,
+    proves: DOC_TIMESTAMP_INFO.proves,
+    does_not_prove: DOC_TIMESTAMP_INFO.does_not_prove,
+    anchor: DOC_TIMESTAMP_INFO.anchor,
+    signer: rec.device_id ?? "HashStamp service key",
+    presence: "none",
+    content: "none",
+  };
+}
+
+/** VER-04 honest headline for a doc-timestamp — existence + time, never authorship. */
+function docHeadline(/** @type {Partial<VerifyRecord>} */ rec) {
+  const fn = rec.filename ? `"${rec.filename}"` : "this file";
+  const when = rec.stamped_at ?? rec.signed_at;
+  const pos = rec.chain_position;
+  let s = `The SHA-256 fingerprint of ${fn} was signed by ZKNOT's HashStamp service key and recorded on the append-only chain`;
+  if (typeof pos === "number") s += ` at position ${pos}`;
+  if (when) s += ` on ${when}`;
+  s += ". Your browser re-verified that signature over the fingerprint just now.";
+  if (rec.chain_integrity === true) s += " The chain is intact.";
+  s += " This proves the file's contents existed at that time; it does not identify who submitted it.";
+  return s;
 }
 
 /** VER-04 honest translation — the headline never exceeds the binding fields. */
