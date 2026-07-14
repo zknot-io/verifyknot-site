@@ -1,0 +1,10 @@
+{
+  "name": "verifyknot-site",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "verifyknot.io static site. This package.json exists ONLY to run the test suite (node:test) — the site itself is plain static files with no build step and no runtime dependencies. Nothing here is deployed; deploy.sh ships the working directory.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

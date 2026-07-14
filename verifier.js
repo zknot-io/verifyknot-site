@@ -177,9 +177,25 @@ export function mapApiResponse(api) {
     chain_position: api.chain_position,
     chain_integrity: api.chain_integrity,
     signed_at: api.signed_at,
+    // Chain-linkage VALUES as the API reports them. Mapped so the proof-bundle
+    // exporter can quote them; they are metadata, not proof — nothing in this
+    // file verifies them, and the bundle labels them METADATA_ONLY.
+    artifact_type: api.artifact_type,
+    artifact_id: api.artifact_id,
+    chain_prev_hash: api.chain_prev_hash,
+    artifact_hash: api.artifact_hash,
     server_asserted_verified: api.verified, // captured ONLY to detect discrepancy
   };
 }
+
+/* NOTE ON WHAT IS DELIBERATELY *NOT* MAPPED (privacy, by construction):
+ * `/v1/verify` echoes the artifact's `metadata` blob UNFILTERED, and for some
+ * non-HashStamp artifact types that blob carries a customer email (zknot-api's
+ * public units-registration path writes metadata.registration.email). This
+ * function is an ALLOWLIST: it names the fields it wants and never spreads
+ * `api.metadata`. Anything built downstream from a mapped record therefore
+ * cannot leak that blob even if a new field appears in it tomorrow.
+ * `session_id` is likewise not mapped — nothing here needs it. */
 
 /* ---------------- file-comparison adapter (VER-33 / "Verify your copy") -------
  * Lets a recipient confirm that a file they hold is byte-for-byte the file whose
