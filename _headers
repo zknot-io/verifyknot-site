@@ -1,0 +1,14 @@
+# Security headers — closes WEB-01 (ZKNOT security assessment 2026-07-09)
+# Cloudflare Pages honors this file for every matched path.
+# NOTE: CSP keeps 'unsafe-inline' for now because /verify, /sign, /start use inline
+# scripts + event handlers. Tighten to nonces/hashes as a P2 (see report roadmap).
+# NOTE: HSTS is per-host without includeSubDomains/preload deliberately — those are a
+# near-one-way door; add them once every *.verifyknot.io subdomain is confirmed HTTPS.
+# WebSerial/WebUSB device signing is NOT affected by CSP fetch directives.
+/*
+  Strict-Transport-Security: max-age=31536000
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), interest-cohort=()
+  Content-Security-Policy: default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; connect-src 'self' https://api.zknot.io; form-action 'self'
