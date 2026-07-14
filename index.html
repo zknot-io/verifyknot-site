@@ -480,6 +480,106 @@
           <button class="verify-btn" id="verifyBtn">Verify</button>
         </div>
 
+        <!-- ─── OPEN PROOF BUNDLE ────────────────────────────────────────────
+             Staged behind ENABLE_PORTABLE_PROOF_BUNDLE; hidden entirely while
+             the flag is off. Reading a bundle is a LOCAL file operation: the
+             .hashstamp file is parsed and verified in this browser and is never
+             uploaded. -->
+        <div id="pbOpenRow" style="display:none;margin-top:10px;align-items:center;gap:10px;flex-wrap:wrap">
+          <button id="pbOpenBtn" type="button"
+                  style="background:none;border:1px solid var(--border-active);color:var(--text);border-radius:5px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;padding:8px 14px;cursor:pointer">
+            OPEN PROOF BUNDLE
+          </button>
+          <span style="font-size:11px;opacity:.6">Have a <code>.hashstamp</code> file? Check it here — offline, no upload.</span>
+          <input type="file" id="pbFileInput" accept=".hashstamp,application/json" style="display:none" />
+        </div>
+
+        <!-- ─── IMPORTED BUNDLE RESULT ──────────────────────────────────────
+             Deliberately a SEPARATE surface from the live-record result: a
+             bundle is evidence a stranger handed you, not a record this page
+             fetched, and conflating the two would let bundle-sourced claims
+             borrow the live path's authority. -->
+        <div id="pbResult" style="display:none;margin-top:16px;border:1px solid var(--border);border-radius:10px;padding:16px;background:rgba(255,255,255,.02)">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
+            <span style="font-size:20px" aria-hidden="true">📦</span>
+            <div style="font-family:var(--display);font-weight:700;font-size:14px;letter-spacing:.02em">PORTABLE HASHSTAMP PROOF</div>
+            <button id="pbClose" type="button"
+                    style="margin-left:auto;background:none;border:1px solid var(--border);color:var(--text-muted);border-radius:3px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;padding:3px 8px;cursor:pointer">
+              CLOSE
+            </button>
+          </div>
+
+          <!-- Parse/verify failure: specific and honest, never a generic red X. -->
+          <div id="pbError" style="display:none;font-size:12px;line-height:1.55;color:#f59e0b;margin-top:8px">—</div>
+
+          <div id="pbOk" style="display:none">
+            <div id="pbHeadline" style="font-size:13px;line-height:1.6;margin:8px 0 14px">—</div>
+
+            <!-- One badge PER PROPERTY. Never one generic green "Verified". -->
+            <div id="pbBadges" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px"></div>
+
+            <div style="font-family:var(--display);font-weight:700;font-size:12px;letter-spacing:.06em;opacity:.85;margin:14px 0 6px">VERIFIED FROM THIS BUNDLE</div>
+            <ul id="pbVerified" style="margin:0 0 4px 18px;font-size:12px;line-height:1.65;opacity:.85"></ul>
+
+            <div style="font-family:var(--display);font-weight:700;font-size:12px;letter-spacing:.06em;opacity:.85;margin:14px 0 6px">NOT CHECKED, OR REQUIRES AN ONLINE UPDATE</div>
+            <ul id="pbUnchecked" style="margin:0 0 4px 18px;font-size:12px;line-height:1.65;opacity:.85"></ul>
+
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:11px;font-family:var(--mono);margin:14px 0 0">
+              <div style="opacity:.55">Schema</div><div id="pbSchema" style="overflow-wrap:anywhere">—</div>
+              <div style="opacity:.55">Record code</div><div id="pbCode">—</div>
+              <div style="opacity:.55">Fingerprint</div><div id="pbFingerprint" style="overflow-wrap:anywhere">—</div>
+              <div style="opacity:.55">Signature</div><div id="pbSig" style="overflow-wrap:anywhere">—</div>
+              <div style="opacity:.55">Signing key</div><div id="pbKey" style="overflow-wrap:anywhere">—</div>
+              <div style="opacity:.55">Chain evidence</div><div id="pbChain">—</div>
+              <div style="opacity:.55">Time evidence</div><div id="pbTime">—</div>
+            </div>
+
+            <div id="pbLimits" style="font-size:11px;line-height:1.6;opacity:.6;margin-top:14px"></div>
+
+            <!-- Optional, EXPLICIT online check. The offline import above never
+                 touches the network; this button is the only thing that does. -->
+            <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+              <button id="pbOnlineBtn" type="button"
+                      style="background:none;border:1px solid var(--border-active);color:var(--text);border-radius:5px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;padding:8px 14px;cursor:pointer">
+                CHECK CURRENT STATUS ONLINE
+              </button>
+              <p style="font-size:11px;line-height:1.5;opacity:.6;margin-top:8px">
+                Optional. Sends only this bundle's public verification code to <code>api.zknot.io</code> to look up the live record.
+                Your bundle, your file, and the result above are not transmitted.
+              </p>
+              <div id="pbOnlineResult" style="display:none;margin-top:10px;font-size:12px;line-height:1.6"></div>
+            </div>
+
+            <!-- Verify your copy, driven by the fingerprint the bundle carries. -->
+            <div id="pbCopyPanel" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+              <div style="font-family:var(--display);font-weight:700;font-size:13px;margin-bottom:4px">Verify your copy</div>
+              <p style="font-size:12px;line-height:1.55;opacity:.72;margin-bottom:10px">
+                Have the file this bundle describes? Check whether it is byte-for-byte the file the receipt recorded.
+              </p>
+              <div id="pbCopyBlocked" style="display:none;font-size:12px;line-height:1.55;color:#f59e0b">—</div>
+              <div id="pbCopyActive" style="display:none">
+                <div id="pbCopyDrop" tabindex="0" role="button"
+                     aria-label="Select a file to compare against this bundle, or drop one here"
+                     style="border:1px dashed var(--border-active);border-radius:6px;padding:16px 14px;text-align:center;cursor:pointer;background:rgba(255,255,255,.02)">
+                  <div style="font-size:18px;margin-bottom:6px" aria-hidden="true">📎</div>
+                  <div id="pbCopyDropText" style="font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--text-dim)">
+                    Drop a file here, or click to choose
+                  </div>
+                </div>
+                <input type="file" id="pbCopyInput" style="display:none" />
+                <div id="pbCopyResult" style="display:none;margin-top:12px;border:1px solid;border-radius:6px;padding:12px 14px">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span id="pbCopyIcon" style="font-size:14px;font-weight:700" aria-hidden="true">—</span>
+                    <span id="pbCopyTitle" style="font-weight:700;font-size:13px">—</span>
+                  </div>
+                  <div id="pbCopyBody" style="font-size:12px;line-height:1.55;opacity:.8;margin-top:8px">—</div>
+                  <div id="pbCopyHashes" style="display:none;margin-top:10px;font-family:var(--mono);font-size:10px;line-height:1.6;opacity:.6;overflow-wrap:anywhere"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="result-wrap" id="resultWrap">
           <div class="result-status" id="resultStatus">
             <div class="status-icon" id="rStatusIcon">…</div>
@@ -555,6 +655,29 @@
                     who owns or wrote it, that anyone approved or agreed to it, or that its contents are true.
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <!-- ─── DOWNLOAD PROOF BUNDLE ──────────────────────────────────────
+                 Staged behind ENABLE_PORTABLE_PROOF_BUNDLE (flags.js); the whole
+                 panel stays display:none unless the flag is on AND the export
+                 gate passes. The file is built here in the browser from the
+                 record already fetched — no bundle-generation request is made. -->
+            <div id="pbPanel" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+              <div style="font-family:var(--display);font-weight:700;font-size:14px;margin-bottom:4px">Portable proof bundle</div>
+              <p style="font-size:12px;line-height:1.55;opacity:.72;margin-bottom:12px">
+                Save a portable copy of this receipt's verification material. The original file is not included.
+              </p>
+              <div id="pbBlocked" style="display:none;font-size:12px;line-height:1.55;color:#f59e0b">—</div>
+              <div id="pbActive" style="display:none">
+                <button id="pbDownload" type="button"
+                        style="background:var(--accent,#22c55e);border:none;color:#03140a;border-radius:5px;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.08em;padding:9px 16px;cursor:pointer">
+                  DOWNLOAD PROOF BUNDLE
+                </button>
+                <p style="font-size:11px;line-height:1.5;opacity:.6;margin-top:10px">
+                  A <code>.hashstamp</code> file is generated in this browser and saved to your device. Nothing is uploaded.
+                  Anyone can re-check it here with <strong>Open proof bundle</strong>, offline.
+                </p>
               </div>
             </div>
           </div>
@@ -654,9 +777,20 @@
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script type="module">
   import { verifyRecord, mapApiResponse, fileComparisonGate, compareLocalFile } from '/verifier.js';
+  import { ENABLE_PORTABLE_PROOF_BUNDLE } from '/flags.js';
+  import { createProofBundleUi } from '/proof-bundle-ui.js';
   const API = 'https://api.zknot.io/v1/verify';
 
   const $ = (id) => document.getElementById(id);
+
+  /* Portable proof bundle — staged behind ENABLE_PORTABLE_PROOF_BUNDLE. All of
+     its logic lives in /proof-bundle-ui.js so it can be driven by the test suite
+     against a real DOM; this page only wires it to the record it just verified. */
+  const proofBundleUi = createProofBundleUi({
+    doc: document, win: window,
+    enabled: ENABLE_PORTABLE_PROOF_BUNDLE,
+    compareLocalFile,
+  });
 
   /* ─── VERIFY YOUR COPY — local-only file comparison ────────────────────────
      Privacy contract enforced here:
@@ -780,7 +914,7 @@
     window.addEventListener('pagehide', resetCopyPanel);
   }
 
-  function renderVerdict(r) {
+  function renderVerdict(r, rec) {
     const status = $('resultStatus');
     status.classList.remove('ok');
     if (r.verdict === 'VERIFIED_CLIENT_SIDE') {
@@ -825,11 +959,15 @@
       // "Verify your copy" — only on a HashStamp receipt, and only ever enabled
       // by fileComparisonGate() once the record itself verified in this browser.
       setupCopyPanel(r);
+      // Export is offered only for a record that verified in THIS browser; the
+      // gate re-checks that itself rather than trusting the branch we are in.
+      proofBundleUi.showForRecord(rec, r);
     } else {
       doc.style.display = 'none';
       bindingRows.forEach((el) => { el.style.display = ''; });
       // Not a file receipt: the feature does not apply. Drop any retained state.
       resetCopyPanel();
+      proofBundleUi.hideForRecord();
     }
 
     $('rIdentity').textContent = r.badges.identity;
@@ -877,7 +1015,8 @@
       $('rStatusIcon').textContent = '…';
       $('rStatusText').textContent = 'CHECKING IN YOUR BROWSER…';
       resultWrap.classList.add('visible');
-      renderVerdict(await verifyRecord(mapApiResponse(data)));
+      const mapped = mapApiResponse(data);
+      renderVerdict(await verifyRecord(mapped), mapped);
 
       // Canonical shareable URL: /v/{code}
       window.history.replaceState({}, '', `${window.location.origin}/v/${encodeURIComponent(data.short_code)}`);
@@ -890,6 +1029,7 @@
   }
 
   wireCopyPanel();
+  proofBundleUi.wire();
 
   $('verifyBtn').addEventListener('click', () => {
     const code = $('codeInput').value.trim(); if (code) verify(code);
