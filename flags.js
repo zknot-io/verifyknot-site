@@ -10,9 +10,15 @@
  *
  * ACTIVATION PROCEDURE (portable proof bundle):
  *   1. Set ENABLE_PORTABLE_PROOF_BUNDLE = true below.
- *   2. Commit, then deploy with ./deploy.sh (ships the working dir — check
+ *   2. Update the guard test in test/flag.test.mjs ("the feature flag is OFF by
+ *      default in the committed source") — it FAILS on purpose the moment the
+ *      flag flips. That is not a break: it is a tripwire so the feature can only
+ *      ship as a deliberate, reviewed act, never as a stray edit. Everything
+ *      else (80/81) passes with the flag on; both states are covered either way.
+ *   3. Commit, then deploy with ./deploy.sh (ships the working dir — check
  *      `git status` first).
- * Rollback is the exact inverse: set it back to false, commit, deploy.
+ * Rollback is the exact inverse: set it back to false, restore the guard test,
+ * commit, deploy. No data migration in either direction.
  *
  * Enabling changes NO stored data and requires NO schema migration: the bundle
  * is built in the browser from a record the API already returns today, and the
