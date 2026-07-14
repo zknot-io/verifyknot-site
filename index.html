@@ -495,13 +495,17 @@
           <div id="docCard" style="display:none;border:1px solid rgba(34,197,94,.35);border-radius:10px;padding:16px;margin:12px 0;background:rgba(34,197,94,.05)">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
               <span style="font-size:22px" aria-hidden="true">📄</span>
-              <div style="font-weight:600;font-size:15px;word-break:break-all" id="dcFilename">—</div>
+              <div style="font-weight:600;font-size:15px;overflow-wrap:break-word;min-width:0" id="dcFilename">—</div>
               <span id="dcBadge" style="margin-left:auto;font-size:12px;font-weight:700;letter-spacing:.02em;border:1px solid;border-radius:20px;padding:3px 10px;white-space:nowrap">✓ VERIFIED</span>
             </div>
             <div style="display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:13px">
-              <div style="opacity:.55">SHA-256</div><div class="hash" id="dcHash" style="word-break:break-all">—</div>
+              <div style="opacity:.55">SHA-256</div><div class="hash" id="dcHash" style="overflow-wrap:anywhere">—</div>
               <div style="opacity:.55">Stamped</div><div id="dcStamped">—</div>
               <div style="opacity:.55">Chain</div><div id="dcChain">—</div>
+              <div style="opacity:.55">Signature</div><div id="dcSig">—</div>
+              <div style="opacity:.55">Signer</div><div id="dcSigner">—</div>
+              <div style="opacity:.55">Time basis</div><div id="dcTimeBasis">—</div>
+              <div style="opacity:.55">Time anchor</div><div id="dcAnchor">—</div>
             </div>
             <div style="margin-top:14px;font-size:12px;line-height:1.55;opacity:.72" id="dcNote">—</div>
           </div>
@@ -634,12 +638,17 @@
       $('dcChain').textContent =
         (dt.chain_position != null ? `Position ${dt.chain_position}` : 'position unknown') +
         (dt.chain_integrity === true ? ' · chain intact' : '');
+      const a = dt.assurance || {};
+      $('dcSig').textContent = a.signature_check === 'VERIFIED_IN_BROWSER' ? 'Verified in your browser' : '—';
+      $('dcSigner').textContent = a.signer === 'HOSTED_SERVICE_KEY' ? 'Hosted service key (not hardware)' : (a.signer || '—');
+      $('dcTimeBasis').textContent = a.time_basis === 'HASHSTAMP_SERVICE_TIME' ? 'HashStamp service time' : (a.time_basis || '—');
+      $('dcAnchor').textContent = a.external_time_anchor ? 'Present' : 'Not present';
       const badge = $('dcBadge');
       const style = (color, tint) => { badge.style.color = color; badge.style.borderColor = color; doc.style.borderColor = tint; doc.style.background = tint.replace('.35', '.05'); };
       if (r.verdict === 'VERIFIED_CLIENT_SIDE') { badge.textContent = '✓ VERIFIED'; style('#22c55e', 'rgba(34,197,94,.35)'); }
       else if (r.verdict === 'FAILED') { badge.textContent = '✗ FAILED'; style('#ef4444', 'rgba(239,68,68,.35)'); }
       else { badge.textContent = '⚠ CANNOT VERIFY'; style('#f59e0b', 'rgba(245,158,11,.35)'); }
-      $('dcNote').textContent = 'Proof that this exact file existed at the stamped time: its fingerprint was signed by the HashStamp service key and locked into the append-only chain. Tamper-evident — change one byte of the file and this fingerprint no longer matches. It does not identify who created or submitted the file.';
+      $('dcNote').textContent = 'Proof that this exact file existed at the stamped time: its fingerprint was signed by the HashStamp hosted service key and recorded in a tamper-evident, hash-linked chain. The time is provided by the HashStamp service, not an external anchor. Tamper-evident — change one byte of the file and this fingerprint no longer matches. It does not identify who created or submitted the file.';
       doc.style.display = 'block';
       bindingRows.forEach((el) => { el.style.display = 'none'; });
     } else {

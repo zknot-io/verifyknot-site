@@ -85,7 +85,7 @@ const TIER_DEFAULT = {
  */
 const DOC_TIMESTAMP_INFO = {
   label: "DOCUMENT-TIMESTAMP",
-  proves: "The file with the SHA-256 fingerprint below was submitted to HashStamp, its fingerprint was signed by ZKNOT's HashStamp service key, and it was recorded at an immutable position in the append-only chain at the stamped time.",
+  proves: "The file with the SHA-256 fingerprint below had its fingerprint signed by ZKNOT's hosted HashStamp service key and recorded at a position in HashStamp's tamper-evident, hash-linked chain. The stamp time is provided by the HashStamp service — it is not anchored to an independent time authority.",
   does_not_prove: "Who created, owned, or uploaded the file; that any specific person was present; or that a human was shown the content. It is tamper-evident, not tamper-proof — anyone holding the file can recompute this same fingerprint.",
   anchor: "Recompute SHA-256 of your own copy of the file and confirm it equals the fingerprint below; your browser has already re-verified the service-key signature over that fingerprint.",
 };
@@ -140,7 +140,7 @@ function tierOf(rec) {
  * @property {string=} file_sha256      hex; the raw 32-byte file SHA-256 — the signed message
  * @property {string=} filename         original file name (display only)
  * @property {string=} stamped_at       ISO time the fingerprint was stamped
- * @property {number=} chain_position   append-only chain index
+ * @property {number=} chain_position   hash-linked chain index
  * @property {boolean=} chain_integrity server-reported chain-intact flag (displayed as data)
  * @property {string=} product          e.g. "hashstamp"
  * @property {string=} signed_at        ISO time the record was signed
@@ -456,6 +456,18 @@ function docFields(/** @type {Partial<VerifyRecord>} */ rec) {
     chain_position: rec.chain_position ?? null,
     chain_integrity: rec.chain_integrity ?? null,
     product: rec.product ?? null,
+    // Assurance-tier disclosure (Phase 5). Honest, current reality: hosted service
+    // key, service-provided time, no external anchor. Signature is re-verified in
+    // THIS browser; chain linkage is reported by the server (not walked client-side).
+    assurance: {
+      time_basis: "HASHSTAMP_SERVICE_TIME",
+      external_time_anchor: false,
+      signer: "HOSTED_SERVICE_KEY",
+      signature_check: "VERIFIED_IN_BROWSER",
+      chain_linkage: rec.chain_integrity === true ? "VERIFIED (server-reported)"
+        : rec.chain_integrity === false ? "BROKEN (server-reported)"
+        : "NOT REPORTED",
+    },
   };
 }
 
@@ -481,7 +493,7 @@ function docHeadline(/** @type {Partial<VerifyRecord>} */ rec) {
   const fn = rec.public_label ? `"${rec.public_label}"` : (rec.filename ? `"${rec.filename}"` : "this file");
   const when = rec.stamped_at ?? rec.signed_at;
   const pos = rec.chain_position;
-  let s = `The SHA-256 fingerprint of ${fn} was signed by ZKNOT's HashStamp service key and recorded on the append-only chain`;
+  let s = `The SHA-256 fingerprint of ${fn} was signed by ZKNOT's HashStamp service key and recorded in a tamper-evident, hash-linked chain`;
   if (typeof pos === "number") s += ` at position ${pos}`;
   if (when) s += ` on ${when}`;
   s += ". Your browser re-verified that signature over the fingerprint just now.";
