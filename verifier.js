@@ -181,6 +181,146 @@ export function mapApiResponse(api) {
   };
 }
 
+/* ---------------- file-comparison adapter (VER-33 / "Verify your copy") -------
+ * Lets a recipient confirm that a file they hold is byte-for-byte the file whose
+ * fingerprint this record already committed to. The comparison is a LOCAL
+ * equality test between two hashes; it is not a second attestation. It proves
+ * only sameness of bytes — never authorship, sender, receipt, ownership,
+ * approval, agreement, or the truth of the contents.
+ * ---------------------------------------------------------------------------- */
+
+/** A SHA-256 fingerprint as 64 hex chars. Case-insensitive on input; the
+ *  canonical form this module emits and compares is always lowercase. */
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/i;
+
+/**
+ * SCHEMA ADAPTER — the ONE place that decides what "the fingerprint this record
+ * committed to" means. Returns the canonical expected SHA-256, or null when the
+ * record carries no usable fingerprint (missing/malformed → the caller must fail
+ * closed, never guess).
+ *
+ * FIELD LAYOUTS CONFIRMED IN PRODUCTION CODE (do not add speculative ones):
+ *   1. `file_sha256` — top level. This is BOTH the mapApiResponse() output shape
+ *      and the docTimestamp block of a verifyRecord() result.
+ *   2. `metadata.file_sha256` — the raw GET /v1/verify/{code} JSON. Every
+ *      HashStamp record ever written carries the fingerprint here: the Worker has
+ *      set metadata.file_sha256 since its first revision (hashstamp-worker.js and
+ *      the pre-phase1 backup agree), so "legacy" HashStamp records differ from
+ *      current ones only by ALSO carrying metadata.filename (pre-F2, now private)
+ *      and lacking metadata.public_label. The fingerprint field name never moved.
+ *
+ * NOTE ON `HASHSTAMP_FILE`: no such artifact_type exists in production. Every
+ * HashStamp record is artifact_type "COMBINED_SESSION" discriminated by
+ * metadata.kind === "document_timestamp" (see isDocTimestamp). HASHSTAMP_FILE is
+ * a TARGET in docs/HASHSTAMP-LAUNCH-AUDIT-20260713.md §137, not a shipped shape,
+ * and its field layout is not yet defined. This adapter therefore keys off the
+ * fingerprint field itself, which that migration does not propose to move — so a
+ * future rename of artifact_type needs no change here. Do not invent fields for
+ * HASHSTAMP_FILE until a real record exists to read.
+ *
+ * @param {any} rec  a mapped record, a raw /v1/verify JSON body, or a
+ *                   verifyRecord() result's docTimestamp block
+ * @returns {{algorithm: "SHA-256", expectedHex: string}|null}
+ */
+export function extractExpectedFingerprint(rec) {
+  if (!rec || typeof rec !== "object") return null;
+  const meta = rec.metadata && typeof rec.metadata === "object" ? rec.metadata : {};
+  const candidate = [rec.file_sha256, meta.file_sha256].find(
+    (v) => typeof v === "string" && v.trim() !== ""
+  );
+  if (!candidate) return null;
+  const hex = candidate.trim().toLowerCase();
+  // Hex is case-insensitive as a value, so we accept either case and canonicalize.
+  // Anything that is not exactly 32 bytes of hex is malformed → no fingerprint.
+  if (!SHA256_HEX_RE.test(hex)) return null;
+  return { algorithm: /** @type {const} */ ("SHA-256"), expectedHex: hex };
+}
+
+/**
+ * TRUST GATE — may this browser offer to compare a local file against this
+ * record? A match shown against a record we could not verify would be a
+ * reassuring lie, so this fails closed on every doubt.
+ *
+ * Enabled ONLY when the record verified cryptographically IN THIS BROWSER, is a
+ * HashStamp document-timestamp, carries a well-formed fingerprint, and is not in
+ * a server-reported chain hard-failure. A failed fetch never reaches here (no
+ * result to gate), which is itself the correct closed state.
+ *
+ * @param {any} result  a verifyRecord() return value
+ * @returns {{enabled: true, fingerprint: {algorithm: "SHA-256", expectedHex: string}}
+ *          |{enabled: false, reason: string}}
+ */
+export function fileComparisonGate(result) {
+  const NO = "File comparison unavailable because this receipt could not be verified.";
+  if (!result || typeof result !== "object") return { enabled: false, reason: NO };
+
+  // Signature invalid, unsupported schema, unreproducible record, or any other
+  // non-verified verdict — the record's own claim is not established.
+  if (result.verdict !== "VERIFIED_CLIENT_SIDE") return { enabled: false, reason: NO };
+
+  // Scope: only HashStamp doc-timestamps commit to a *file* fingerprint. Other
+  // record kinds carry hashes that mean something else; comparing a file against
+  // one of those would answer a question the record never asked.
+  if (result.kind !== "document_timestamp" || !result.docTimestamp) {
+    return { enabled: false, reason: NO };
+  }
+
+  const fingerprint = extractExpectedFingerprint(result.docTimestamp);
+  if (!fingerprint) return { enabled: false, reason: NO }; // missing or malformed
+
+  // Chain hard-failure (server-reported). The signature may still be good, but
+  // the record's position in the tamper-evident chain is in a failure state, so
+  // we do not put a reassuring green result next to it. `null`/not-reported is
+  // NOT a hard failure — it is simply unreported, and the record's own signature
+  // was re-verified here.
+  if (result.docTimestamp.chain_integrity === false) return { enabled: false, reason: NO };
+  if (result.docTimestamp.assurance?.chain_linkage?.startsWith("BROKEN")) {
+    return { enabled: false, reason: NO };
+  }
+
+  return { enabled: true, fingerprint };
+}
+
+/**
+ * Compare a local File/Blob against an expected fingerprint. Runs entirely in
+ * this browser: the bytes go to WebCrypto and nowhere else. Never throws — a
+ * read failure is returned as an honest "could not compare", which is NOT a
+ * statement about the file's validity.
+ *
+ * @param {Blob} file
+ * @param {{algorithm: "SHA-256", expectedHex: string}} expected
+ * @returns {Promise<{outcome: "MATCH"|"MISMATCH", localHex: string}
+ *          |{outcome: "ERROR", reason: string}>}
+ */
+export async function compareLocalFile(file, expected) {
+  if (!file || typeof file.arrayBuffer !== "function") {
+    return { outcome: /** @type {const} */ ("ERROR"), reason: "No readable file was selected." };
+  }
+  if (!expected || !SHA256_HEX_RE.test(expected.expectedHex ?? "")) {
+    return { outcome: /** @type {const} */ ("ERROR"), reason: "This receipt does not carry a usable SHA-256 fingerprint to compare against." };
+  }
+
+  let localHex;
+  try {
+    // Whole-file read: WebCrypto's digest() has no streaming API, so a very large
+    // file can exhaust memory here. That surfaces as a concrete read error below
+    // rather than as a mismatch — we never call a file "different" when we simply
+    // failed to read it.
+    const buf = await file.arrayBuffer();
+    localHex = bytesToHex(await subtle.digest("SHA-256", buf));
+  } catch (e) {
+    const msg = /** @type {Error} */ (e)?.message || String(e);
+    return {
+      outcome: /** @type {const} */ ("ERROR"),
+      reason: `This file could not be read in your browser (${msg}). The file may be too large to hash here, or it may have changed on disk since you selected it. This says nothing about whether the file is valid.`,
+    };
+  }
+
+  return localHex === expected.expectedHex
+    ? { outcome: /** @type {const} */ ("MATCH"), localHex }
+    : { outcome: /** @type {const} */ ("MISMATCH"), localHex };
+}
+
 /* ---------------- encoding helpers ---------------- */
 
 /** @param {string} hex @returns {Uint8Array} */

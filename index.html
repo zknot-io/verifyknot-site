@@ -508,6 +508,55 @@
               <div style="opacity:.55">Time anchor</div><div id="dcAnchor">—</div>
             </div>
             <div style="margin-top:14px;font-size:12px;line-height:1.55;opacity:.72" id="dcNote">—</div>
+
+            <!-- ─── VERIFY YOUR COPY ───────────────────────────────────────────
+                 Local-only file comparison. The selected file is hashed by
+                 WebCrypto in this browser and compared against the fingerprint
+                 already carried by the verified record. Nothing here touches the
+                 network: no upload, no filename, no local hash, no result. -->
+            <div id="copyPanel" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+              <div style="font-family:var(--display);font-weight:700;font-size:14px;margin-bottom:4px">Verify your copy</div>
+              <p style="font-size:12px;line-height:1.55;opacity:.72;margin-bottom:12px">
+                Have a copy of this file? Check whether it is byte-for-byte the file this receipt recorded.
+              </p>
+
+              <!-- Gated-off state: the record itself could not be trusted. -->
+              <div id="copyBlocked" style="display:none;font-size:12px;line-height:1.55;color:#f59e0b">—</div>
+
+              <div id="copyActive" style="display:none">
+                <div id="copyDrop" tabindex="0" role="button"
+                     aria-label="Select a file to compare, or drop one here"
+                     style="border:1px dashed var(--border-active);border-radius:6px;padding:18px 14px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;background:rgba(255,255,255,.02)">
+                  <div style="font-size:20px;margin-bottom:6px" aria-hidden="true">📎</div>
+                  <div id="copyDropText" style="font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--text-dim)">
+                    Drop a file here, or click to choose
+                  </div>
+                </div>
+                <input type="file" id="copyInput" style="display:none" />
+
+                <p style="font-size:11px;line-height:1.5;opacity:.6;margin-top:10px">
+                  Your file stays in this browser. VerifyKnot compares its fingerprint locally and does not upload the file, filename, or comparison result.
+                </p>
+
+                <!-- Outcome -->
+                <div id="copyResult" style="display:none;margin-top:12px;border:1px solid;border-radius:6px;padding:12px 14px">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span id="copyResultIcon" style="font-size:14px;font-weight:700" aria-hidden="true">—</span>
+                    <span id="copyResultTitle" style="font-weight:700;font-size:13px">—</span>
+                    <button id="copyClear" type="button"
+                            style="margin-left:auto;background:none;border:1px solid var(--border);color:var(--text-muted);border-radius:3px;font-family:var(--mono);font-size:10px;letter-spacing:.08em;padding:3px 8px;cursor:pointer">
+                      REMOVE
+                    </button>
+                  </div>
+                  <div id="copyResultBody" style="font-size:12px;line-height:1.55;opacity:.8;margin-top:8px">—</div>
+                  <div id="copyHashes" style="display:none;margin-top:10px;font-family:var(--mono);font-size:10px;line-height:1.6;opacity:.6;overflow-wrap:anywhere"></div>
+                  <div id="copyScope" style="display:none;font-size:11px;line-height:1.5;opacity:.6;margin-top:10px">
+                    This compares bytes only. It does not show who created the file, who sent or received it,
+                    who owns or wrote it, that anyone approved or agreed to it, or that its contents are true.
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div class="result-fields">
@@ -604,10 +653,132 @@
 </footer>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script type="module">
-  import { verifyRecord, mapApiResponse } from '/verifier.js';
+  import { verifyRecord, mapApiResponse, fileComparisonGate, compareLocalFile } from '/verifier.js';
   const API = 'https://api.zknot.io/v1/verify';
 
   const $ = (id) => document.getElementById(id);
+
+  /* ─── VERIFY YOUR COPY — local-only file comparison ────────────────────────
+     Privacy contract enforced here:
+       · the File object never reaches fetch/XHR/beacon — it only reaches WebCrypto
+       · the local filename and the locally computed hash are never transmitted
+         and never written to the URL (no history/replaceState with either)
+       · match/mismatch is not reported anywhere in the MVP
+       · every reference is dropped on remove, on re-verify, and on navigate
+     Only `expectedFingerprint` — data the record already made public — is held. */
+  let expectedFingerprint = null; // {algorithm, expectedHex} from the verified record
+  let selectedFile = null;        // transient; cleared aggressively (see clearCopy)
+
+  function clearCopy() {
+    selectedFile = null;
+    const input = $('copyInput');
+    if (input) input.value = ''; // drop the browser's own reference to the file
+    $('copyResult').style.display = 'none';
+    $('copyHashes').style.display = 'none';
+    $('copyHashes').textContent = '';
+    $('copyScope').style.display = 'none';
+    $('copyDropText').textContent = 'Drop a file here, or click to choose';
+  }
+
+  function resetCopyPanel() {
+    expectedFingerprint = null;
+    clearCopy();
+    $('copyPanel').style.display = 'none';
+    $('copyBlocked').style.display = 'none';
+    $('copyActive').style.display = 'none';
+  }
+
+  // Trust gating lives in verifier.js (fileComparisonGate); this only renders it.
+  function setupCopyPanel(r) {
+    resetCopyPanel();
+    $('copyPanel').style.display = 'block';
+    const gate = fileComparisonGate(r);
+    if (!gate.enabled) {
+      $('copyBlocked').textContent = gate.reason;
+      $('copyBlocked').style.display = 'block';
+      return;
+    }
+    expectedFingerprint = gate.fingerprint;
+    $('copyActive').style.display = 'block';
+  }
+
+  function showCopyOutcome({ icon, title, body, color, hashes, scope }) {
+    const box = $('copyResult');
+    box.style.display = 'block';
+    box.style.borderColor = color;
+    box.style.background = color.replace('rgb(', 'rgba(').replace(')', ',.06)');
+    $('copyResultIcon').textContent = icon;
+    $('copyResultIcon').style.color = color;
+    $('copyResultTitle').textContent = title;
+    $('copyResultTitle').style.color = color;
+    $('copyResultBody').textContent = body;
+    if (hashes) { $('copyHashes').textContent = hashes; $('copyHashes').style.display = 'block'; }
+    if (scope) { $('copyScope').style.display = 'block'; }
+  }
+
+  async function handleCopyFile(file) {
+    if (!file) return;
+    if (!expectedFingerprint) { // defence in depth: never compare against an ungated record
+      showCopyOutcome({
+        icon: '⚠', color: 'rgb(245,158,11)', title: 'Could not verify this file',
+        body: 'This receipt has no verified fingerprint to compare against.',
+      });
+      return;
+    }
+    selectedFile = file;
+    // Local display only — the filename is never transmitted. textContent, not
+    // innerHTML: a filename is untrusted text.
+    $('copyDropText').textContent = file.name;
+    showCopyOutcome({
+      icon: '…', color: 'rgb(156,163,175)', title: 'Hashing in your browser…',
+      body: 'Computing this file\'s SHA-256 fingerprint locally. Large files may take a moment.',
+    });
+
+    const res = await compareLocalFile(file, expectedFingerprint);
+
+    // The user may have removed the file while we were hashing — honour that.
+    if (selectedFile !== file) return;
+
+    if (res.outcome === 'MATCH') {
+      showCopyOutcome({
+        icon: '✓', color: 'rgb(34,197,94)', title: 'Exact match',
+        body: 'This file is byte-for-byte identical to the file fingerprint recorded in this Hashstamp receipt.',
+        hashes: `your copy   ${res.localHex}\nrecorded    ${expectedFingerprint.expectedHex}`,
+        scope: true,
+      });
+    } else if (res.outcome === 'MISMATCH') {
+      showCopyOutcome({
+        icon: '✗', color: 'rgb(239,68,68)', title: 'Different file',
+        body: 'This file does not match the recorded fingerprint. It may be a different version, modified copy, or unrelated file.',
+        hashes: `your copy   ${res.localHex}\nrecorded    ${expectedFingerprint.expectedHex}`,
+        scope: true,
+      });
+    } else {
+      showCopyOutcome({
+        icon: '⚠', color: 'rgb(245,158,11)', title: 'Could not verify this file',
+        body: res.reason,
+      });
+    }
+  }
+
+  function wireCopyPanel() {
+    const drop = $('copyDrop'), input = $('copyInput');
+    drop.addEventListener('click', () => input.click());
+    drop.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
+    });
+    input.addEventListener('change', (e) => handleCopyFile(e.target.files[0]));
+    ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => {
+      e.preventDefault(); drop.style.borderColor = 'var(--accent)'; drop.style.background = 'rgba(34,197,94,.06)';
+    }));
+    ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => {
+      e.preventDefault(); drop.style.borderColor = 'var(--border-active)'; drop.style.background = 'rgba(255,255,255,.02)';
+    }));
+    drop.addEventListener('drop', (e) => handleCopyFile(e.dataTransfer?.files?.[0]));
+    $('copyClear').addEventListener('click', clearCopy);
+    // Requirement 7: drop file references when the user navigates away.
+    window.addEventListener('pagehide', resetCopyPanel);
+  }
 
   function renderVerdict(r) {
     const status = $('resultStatus');
@@ -651,9 +822,14 @@
       $('dcNote').textContent = 'Proof that this exact file existed at the stamped time: its fingerprint was signed by the HashStamp hosted service key and recorded in a tamper-evident, hash-linked chain. The time is provided by the HashStamp service, not an external anchor. Tamper-evident — change one byte of the file and this fingerprint no longer matches. It does not identify who created or submitted the file.';
       doc.style.display = 'block';
       bindingRows.forEach((el) => { el.style.display = 'none'; });
+      // "Verify your copy" — only on a HashStamp receipt, and only ever enabled
+      // by fileComparisonGate() once the record itself verified in this browser.
+      setupCopyPanel(r);
     } else {
       doc.style.display = 'none';
       bindingRows.forEach((el) => { el.style.display = ''; });
+      // Not a file receipt: the feature does not apply. Drop any retained state.
+      resetCopyPanel();
     }
 
     $('rIdentity').textContent = r.badges.identity;
@@ -678,6 +854,8 @@
     const btn = $('verifyBtn'), resultWrap = $('resultWrap'), errorWrap = $('errorWrap');
     btn.textContent = '...'; btn.disabled = true;
     resultWrap.classList.remove('visible'); errorWrap.classList.remove('visible');
+    // A new lookup invalidates any prior record's fingerprint and file selection.
+    resetCopyPanel();
     try {
       const res = await fetch(`${API}/${encodeURIComponent(code.trim())}`);
       const data = await res.json();
@@ -710,6 +888,8 @@
       btn.textContent = 'Verify'; btn.disabled = false;
     }
   }
+
+  wireCopyPanel();
 
   $('verifyBtn').addEventListener('click', () => {
     const code = $('codeInput').value.trim(); if (code) verify(code);
