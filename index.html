@@ -628,7 +628,7 @@
     const bindingRows = document.querySelectorAll('.binding-row');
     if (isDoc) {
       const dt = r.docTimestamp;
-      $('dcFilename').textContent = dt.filename || '(unnamed file)';
+      $('dcFilename').textContent = dt.public_label || dt.filename || '(no label)';
       $('dcHash').textContent = dt.file_sha256 || '—';
       $('dcStamped').textContent = dt.stamped_at ? new Date(dt.stamped_at).toISOString() : '—';
       $('dcChain').textContent =

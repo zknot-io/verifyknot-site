@@ -170,7 +170,8 @@ export function mapApiResponse(api) {
     // HashStamp document-timestamp fields (live shape nests these under metadata)
     kind: api.metadata?.kind ?? api.kind,
     file_sha256: api.metadata?.file_sha256 ?? api.file_sha256,
-    filename: api.metadata?.filename ?? api.filename,
+    filename: api.metadata?.filename ?? api.filename, // legacy records only; not sent by new stamps
+    public_label: api.metadata?.public_label ?? null, // F2: optional user label (new records)
     stamped_at: api.metadata?.stamped_at ?? api.signed_at,
     product: api.metadata?.product ?? api.product,
     chain_position: api.chain_position,
@@ -448,7 +449,8 @@ async function verifyDocTimestamp(rec) {
 /** File-centric facts for the freelancer-legible view (Option 3). */
 function docFields(/** @type {Partial<VerifyRecord>} */ rec) {
   return {
-    filename: rec.filename ?? null,
+    filename: rec.filename ?? null, // legacy records only
+    public_label: rec.public_label ?? null, // F2: shown in preference to filename for new records
     file_sha256: rec.file_sha256 ?? null,
     stamped_at: rec.stamped_at ?? rec.signed_at ?? null,
     chain_position: rec.chain_position ?? null,
@@ -474,7 +476,9 @@ function docBadges(/** @type {Partial<VerifyRecord>} */ rec) {
 
 /** VER-04 honest headline for a doc-timestamp — existence + time, never authorship. */
 function docHeadline(/** @type {Partial<VerifyRecord>} */ rec) {
-  const fn = rec.filename ? `"${rec.filename}"` : "this file";
+  // Prefer the optional public_label (new records); fall back to filename for
+  // historical records; else a neutral phrase. Never rewrites old records.
+  const fn = rec.public_label ? `"${rec.public_label}"` : (rec.filename ? `"${rec.filename}"` : "this file");
   const when = rec.stamped_at ?? rec.signed_at;
   const pos = rec.chain_position;
   let s = `The SHA-256 fingerprint of ${fn} was signed by ZKNOT's HashStamp service key and recorded on the append-only chain`;
