@@ -123,9 +123,13 @@ toxic field cannot leak because nothing copies it.
 rejection test; deny-list with mutation tests proving it fires. Injecting
 `filename: rec.filename` into the exporter fails 3 privacy tests.
 
-> **Out of scope but reported:** the units-registration email exposure on
-> `GET /v1/verify` is a **pre-existing zknot-api issue**, independent of this
-> feature. It is not touched here. See the final report.
+> **Out of scope, and already tracked:** the PII exposure on public
+> `GET /v1/verify` is finding **API-02 (High)** from the 2026-07-09 assessment,
+> filed as Taskwarrior task 19 (`+secaudit +p0`). It is a **zknot-api** issue,
+> independent of this feature and **not fixed here**. This feature's structural
+> allowlist means the exporter cannot propagate it, which reduces blast radius
+> but does not close API-02 — that needs the `metadata` echo allowlisted
+> server-side.
 
 ### 4.7 Correlation / tracking via the bundle
 

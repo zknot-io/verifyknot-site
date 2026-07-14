@@ -196,7 +196,9 @@ it cannot become a tracking token.
 
 `GET /v1/verify/{code}` echoes the artifact's `metadata` blob **unfiltered**. For
 non-HashStamp artifact types that blob can contain a customer email (zknot-api's
-public units-registration path writes `metadata.registration.email`).
+public units-registration path writes `metadata.registration.email`) — a known
+issue tracked as security finding **API-02 (High)**, Taskwarrior task 19, and
+**not fixed by this work**.
 
 The builder therefore reads **only named fields off the mapped record**
 (`mapApiResponse` output), and never spreads `metadata`. A field invented

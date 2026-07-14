@@ -21,6 +21,13 @@ md["registration"] = { "email": req.email, "shopify_order_id": ..., ... }
 An exporter that copied `metadata` wholesale would therefore write a customer
 email into a file whose entire purpose is to be emailed to third parties.
 
+> **This is a known, tracked issue — not a discovery of this work.** The PII
+> exposure on public `/v1/verify` is security finding **API-02 (High)**, filed in
+> Taskwarrior as task 19 (`+secaudit +p0`) by the 2026-07-09 assessment. It is a
+> **zknot-api** problem and is **not fixed here**; this feature only guarantees
+> that the proof-bundle exporter cannot propagate it. Closing API-02 still
+> requires allowlisting the `metadata` echo server-side.
+
 So the privacy guarantee here is **structural, not a filter**:
 
 1. `mapApiResponse()` (verifier.js) is an **allowlist** — it names the fields it
