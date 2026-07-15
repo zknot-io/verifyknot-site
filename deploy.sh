@@ -4,23 +4,49 @@
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")" && pwd)"
 
-# ── GUARDRAIL — must run BEFORE anything is staged ───────────────────────────
-# This script rsyncs the WORKING DIRECTORY. It does not read a git ref. So the
-# thing that gets published is whatever happens to be checked out right now —
-# which means "the work is parked on a branch" buys exactly ZERO deploy safety.
+# ═════════════════════════════════════════════════════════════════════════════
+#  THIS SCRIPT IS NOT THE APPROVED PRODUCTION PATH.
 #
-# That mechanism has already misfired three times (all 2026-07-14):
-#   1. `_headers` reached production from an UNTRACKED file, silently.
+#  Use:  verifyknot-deploy production --confirm <sha>
+#        (~/.local/bin/verifyknot-deploy — lives OUTSIDE every checkout)
+#
+#  Why: this file is versioned, so it SWITCHES WITH THE BRANCH. A guardrail
+#  added here on main is simply ABSENT on any branch that predates it. That is
+#  not theory — on 2026-07-15 a `git switch` replaced this guarded script with
+#  an older unguarded copy, which ignored DRY_RUN and deployed for real. A guard
+#  you can remove by checking out a different branch is not a control.
+#  The checks below are a SECONDARY defense only. They are retained because the
+#  dirty-tree case is the one real production hazard (see below).
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# GUARDRAIL — must run BEFORE anything is staged.
+#
+# This script rsyncs the WORKING DIRECTORY. It does not read a git ref, so it
+# publishes whatever is checked out right now.
+#
+# WHAT THE RISK ACTUALLY IS — corrected 2026-07-15 against direct evidence.
+# Earlier versions of this comment (and the launch journal, and the readiness
+# plan) claimed a feature-branch checkout here "would publish the unmerged
+# feature to verifyknot.io". THAT WAS WRONG. It was tested empirically:
+# deploying from wip/verify-your-copy-20260714 produced a PREVIEW deployment
+# (wip-verify-your-copy-2026071.verifyknot.pages.dev) and production was never
+# touched. Cloudflare Pages routes non-production branches to preview.
+#
+# The real, demonstrated production hazard is narrower and lives right here:
+#   publishing an UNCOMMITTED or INCORRECT working tree while ON main.
+# That reaches the custom domain. Branch checkout does not.
+#
+# Note also: Pages branch-routing is Cloudflare's behaviour, not a control we
+# own. verifyknot-deploy enforces independently of it. Do not rely on routing.
+#
+# Two real incidents this file's denylist DID cause (both 2026-07-14):
+#   1. `_headers` reached production from an UNTRACKED file, silently — an
+#      exclude-list ships whatever nobody remembered to exclude.
 #   2. A clean `git archive` deploy would have STRIPPED those headers back out
 #      (reopening WEB-01) — caught only because someone read this script.
-#   3. This repo sat checked out on wip/verify-your-copy-20260714 with this
-#      script armed to publish an unmerged feature. Nobody ran it. That was
-#      luck, not control.
+# verifyknot-deploy replaces the denylist with an explicit allowlist.
 #
-# So: refuse to publish anything that is not committed, reviewed main.
-# There is deliberately NO override flag. If you need to ship it, commit it to
-# main — that is the entire point. For testing a branch, use a Cloudflare Pages
-# preview deployment, not this script.
+# No override flag, deliberately. If it should ship, commit it to main.
 BRANCH="$(git -C "$SRC" rev-parse --abbrev-ref HEAD)"
 if [ "$BRANCH" != "main" ]; then
   echo "ABORT: on branch '$BRANCH', not main."
@@ -38,6 +64,13 @@ if [ -n "$DIRTY" ]; then
 fi
 
 echo "Guardrail OK: main @ $(git -C "$SRC" rev-parse --short HEAD), tree clean."
+echo ""
+echo "WARNING: this script is a SECONDARY defense, not the approved production path."
+echo "         It builds from the working directory and lives inside the repo, so it"
+echo "         switches with the branch. The approved path builds from a clean"
+echo "         detached worktree at a signed, pushed commit:"
+echo "           verifyknot-deploy production --confirm $(git -C "$SRC" rev-parse --short HEAD)"
+echo ""
 
 # ── Stage ────────────────────────────────────────────────────────────────────
 STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
