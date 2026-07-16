@@ -177,7 +177,14 @@ export function mapApiResponse(api) {
     chain_position: api.chain_position,
     chain_integrity: api.chain_integrity,
     signed_at: api.signed_at,
-    server_asserted_verified: api.verified, // captured ONLY to detect discrepancy
+    // Captured ONLY to detect discrepancy — so it must be the server's answer to
+    // the SAME question this browser asks. localOk is signature-only (VER-11 /
+    // DT-11). Since API-01 the server's `verified` is signature AND key_anchored
+    // AND chain_integrity, so comparing against it reports "Discrepancy" on every
+    // legacy record signed before the anchor existed — a true verdict pair, wrongly
+    // rendered as a contradiction. signature_valid is the like-for-like field.
+    // Absent (pre-API-01 server): undefined -> discrepancy() declines to compare.
+    server_asserted_verified: api.signature_valid,
   };
 }
 
@@ -541,8 +548,13 @@ function badgesOf(/** @type {Partial<VerifyRecord>} */ rec) {
 }
 
 /**
- * If the server asserted a verdict and it disagrees with the local math,
- * say so explicitly. Local math wins; the disagreement is reported.
+ * If the server asserted a signature verdict and it disagrees with the local
+ * math, say so explicitly. Local math wins; the disagreement is reported.
+ *
+ * Scope note: this compares SIGNATURE verdicts only, because that is the only
+ * question this browser can answer. The server's broader `verified` (which also
+ * requires an anchored key and an intact chain) is not comparable to localOk and
+ * is displayed as data elsewhere, not cross-checked here.
  * @param {Partial<VerifyRecord> & {server_asserted_verified?: boolean}} rec
  * @param {boolean|null} localOk
  */
@@ -550,11 +562,11 @@ function discrepancy(rec, localOk) {
   if (typeof rec.server_asserted_verified !== "boolean") return null;
   if (localOk === null) {
     return rec.server_asserted_verified
-      ? "Server asserted verified=true, but the check could not even be run in this browser (incomplete or malformed record data). Treat the server assertion as unverified."
+      ? "Server asserted signature_valid=true, but the check could not even be run in this browser (incomplete or malformed record data). Treat the server assertion as unverified."
       : null;
   }
   if (rec.server_asserted_verified !== localOk) {
-    return `Server asserted verified=${rec.server_asserted_verified} but the math in this browser says ${localOk}. The browser-computed verdict is authoritative; treat the server assertion as unverified.`;
+    return `Server asserted signature_valid=${rec.server_asserted_verified} but the signature math in this browser says ${localOk}. The browser-computed verdict is authoritative; treat the server assertion as unverified.`;
   }
   return null;
 }
