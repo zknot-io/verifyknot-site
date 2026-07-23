@@ -510,6 +510,42 @@
             <div style="margin-top:14px;font-size:12px;line-height:1.55;opacity:.72" id="dcNote">—</div>
           </div>
 
+          <!-- BIP attested-post view: shown only for record_kind === "bip_post".
+               Leads with the witness + content, and offers "verify your copy". -->
+          <div id="bipCard" style="display:none;border:1px solid rgba(34,197,94,.35);border-radius:10px;padding:16px;margin:12px 0;background:rgba(34,197,94,.05)">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+              <span style="font-size:20px" aria-hidden="true">⬢</span>
+              <div style="font-weight:600;font-size:15px;min-width:0" id="bcTitle">Attested build-in-public post</div>
+              <span id="bcBadge" style="margin-left:auto;font-size:12px;font-weight:700;letter-spacing:.02em;border:1px solid;border-radius:20px;padding:3px 10px;white-space:nowrap">VALID</span>
+            </div>
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:13px">
+              <div style="opacity:.55">Publishing witness</div><div id="bcWitness">—</div>
+              <div style="opacity:.55">Signed (UTC)</div><div id="bcSignedAt">—</div>
+              <div style="opacity:.55">Content SHA-256</div><div class="hash" id="bcContentHash" style="overflow-wrap:anywhere">—</div>
+              <div style="opacity:.55">Version</div><div id="bcVersion">—</div>
+              <div style="opacity:.55">Post</div><div id="bcPostLink">—</div>
+            </div>
+            <div style="margin-top:14px;font-size:12px;line-height:1.6;opacity:.8" id="bcScope">—</div>
+
+            <!-- Verify your copy: recompute SHA-256 locally, compare to the SIGNED
+                 content hash. Bytes never leave the browser. -->
+            <div id="bcCopyPanel" style="display:none;margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08)">
+              <div style="font-weight:600;font-size:13px;margin-bottom:6px">Verify your copy</div>
+              <div style="font-size:12px;opacity:.7;margin-bottom:10px" id="bcCopyHint">
+                Select your copy of the post file. Its SHA-256 is computed here, in your browser, and compared to the hash this record signed. Nothing is uploaded.
+              </div>
+              <input type="file" id="bcFile" style="font-size:12px"/>
+              <div id="bcCopyResult" style="display:none;margin-top:10px;font-size:13px;line-height:1.5"></div>
+            </div>
+            <div id="bcCopyDisabled" style="display:none;margin-top:12px;font-size:12px;opacity:.6"></div>
+
+            <!-- Version history: prior attestations of this same post. -->
+            <details id="bcHistory" style="display:none;margin-top:14px">
+              <summary style="cursor:pointer;font-size:12px;opacity:.7">Version history</summary>
+              <div id="bcHistoryList" style="margin-top:8px;font-size:12px;line-height:1.6"></div>
+            </details>
+          </div>
+
           <div class="result-fields">
             <div class="field-row">
               <div class="field-key">Short Code</div>
@@ -604,10 +640,24 @@
 </footer>
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script type="module">
-  import { verifyRecord, mapApiResponse } from '/verifier.js';
+  import { verifyRecord, mapApiResponse, fileComparisonGate, compareLocalFile } from '/verifier.js';
   const API = 'https://api.zknot.io/v1/verify';
 
   const $ = (id) => document.getElementById(id);
+
+  // Set the BIP witness-card verdict badge. When a copy has been compared, the
+  // copy result drives the verdict (that IS the reader's question); otherwise the
+  // record's own verdict stands.
+  function setBipBadge(kind) {
+    const badge = $('bcBadge'), card = $('bipCard');
+    const paint = (color, tint) => {
+      badge.style.color = color; badge.style.borderColor = color;
+      card.style.borderColor = tint; card.style.background = tint.replace('.35', '.05');
+    };
+    if (kind === 'VALID') { badge.textContent = 'VALID'; paint('#22c55e', 'rgba(34,197,94,.35)'); }
+    else if (kind === 'INVALID') { badge.textContent = 'INVALID'; paint('#ef4444', 'rgba(239,68,68,.35)'); }
+    else { badge.textContent = 'CANNOT VERIFY'; paint('#f59e0b', 'rgba(245,158,11,.35)'); }
+  }
 
   function renderVerdict(r) {
     const status = $('resultStatus');
@@ -653,8 +703,21 @@
       bindingRows.forEach((el) => { el.style.display = 'none'; });
     } else {
       doc.style.display = 'none';
-      bindingRows.forEach((el) => { el.style.display = ''; });
     }
+
+    // BIP attested-post view: witness card + "verify your copy" + version history.
+    const isBip = r.kind === 'bip_post' && !!r.bip;
+    const bip = $('bipCard');
+    if (isBip) {
+      renderBip(r);
+      bip.style.display = 'block';
+    } else {
+      bip.style.display = 'none';
+    }
+
+    // Hide the generic identity/presence/content grid for the file-led views.
+    if (isDoc || isBip) bindingRows.forEach((el) => { el.style.display = 'none'; });
+    else bindingRows.forEach((el) => { el.style.display = ''; });
 
     $('rIdentity').textContent = r.badges.identity;
     $('rSigner').textContent = r.badges.signer || '—';
@@ -672,6 +735,111 @@
     const d = $('rDiscrepancy');
     if (r.server_discrepancy) { d.textContent = 'Discrepancy: ' + r.server_discrepancy; d.style.display = 'block'; }
     else { d.style.display = 'none'; }
+  }
+
+  // Holds the file-comparison gate for the currently displayed BIP record, so
+  // the (once-attached) file input can compare against the right fingerprint.
+  let bipState = { gate: { enabled: false } };
+
+  function renderBip(r) {
+    const b = r.bip;
+    $('bcTitle').textContent = b.post_id ? `Attested post — ${b.post_id}` : 'Attested build-in-public post';
+    $('bcWitness').textContent = b.witness || '—';
+    $('bcSignedAt').textContent = b.signed_at ? new Date(b.signed_at).toISOString() : '—';
+    $('bcContentHash').textContent = b.content_sha256 || '—';
+    $('bcVersion').textContent = b.version != null ? `v${b.version}` : '—';
+
+    const postCell = $('bcPostLink');
+    postCell.innerHTML = '';
+    if (b.post_url) {
+      const a = document.createElement('a');
+      a.href = b.post_url; a.textContent = b.post_url; a.rel = 'noopener';
+      a.style.color = '#22c55e'; a.style.overflowWrap = 'anywhere';
+      postCell.appendChild(a);
+    } else { postCell.textContent = '—'; }
+
+    // Witness-language scope paragraph (what this proves / what it doesn't).
+    // Purpose-written and self-contained so a stranger needs no prior context;
+    // names the actual witness device. Witness language only — no authorization.
+    const who = b.witness || 'a WitnessMark device';
+    $('bcScope').textContent =
+      `What this proves: the post above existed in exactly these bytes and was ` +
+      `signed by ZKNOT's publishing-witness device ${who} — a hardware secure ` +
+      `element whose key ZKNOT vouches for — at the UTC time shown. Change one ` +
+      `byte of the file and it no longer matches. What it does NOT prove: who ` +
+      `wrote the post, that any person was present or was shown it, that its ` +
+      `contents are true, or that anything is authorized. It is a witness, not a ` +
+      `gate: it records that this content existed in this exact form and was ` +
+      `signed via this device at this time — nothing more.`;
+
+    // Base verdict from the record itself (a loaded copy can override to INVALID).
+    if (r.verdict === 'VERIFIED_CLIENT_SIDE' && b.key_anchored) setBipBadge('VALID');
+    else if (r.verdict === 'FAILED') setBipBadge('INVALID');
+    else setBipBadge('CANNOT');
+
+    // Version history.
+    const hist = Array.isArray(b.version_history) ? b.version_history : [];
+    const histWrap = $('bcHistory'), histList = $('bcHistoryList');
+    if (hist.length > 1) {
+      histList.innerHTML = '';
+      for (const e of hist) {
+        const row = document.createElement('div');
+        const isCurrent = e.version === b.version;
+        const label = `v${e.version}`;
+        if (e.short_code && !isCurrent) {
+          const a = document.createElement('a');
+          a.href = `/v/${encodeURIComponent(e.short_code)}`;
+          a.textContent = label; a.style.color = '#22c55e';
+          row.appendChild(a);
+        } else {
+          const s = document.createElement('span');
+          s.textContent = label + (isCurrent ? ' (this version)' : '');
+          s.style.opacity = isCurrent ? '1' : '.7';
+          row.appendChild(s);
+        }
+        const when = document.createElement('span');
+        when.style.opacity = '.5';
+        when.textContent = e.signed_at ? '  ·  ' + new Date(e.signed_at).toISOString() : '';
+        row.appendChild(when);
+        histList.appendChild(row);
+      }
+      histWrap.style.display = 'block';
+    } else { histWrap.style.display = 'none'; }
+
+    // "Verify your copy" gate.
+    bipState.gate = fileComparisonGate(r);
+    const panel = $('bcCopyPanel'), disabled = $('bcCopyDisabled'), result = $('bcCopyResult');
+    result.style.display = 'none'; result.textContent = '';
+    $('bcFile').value = '';
+    if (bipState.gate.enabled) {
+      panel.style.display = 'block'; disabled.style.display = 'none';
+    } else {
+      panel.style.display = 'none';
+      disabled.style.display = 'block';
+      disabled.textContent = bipState.gate.reason || 'File comparison is unavailable for this record.';
+    }
+  }
+
+  async function onCopyFileChosen(file) {
+    const result = $('bcCopyResult');
+    if (!file || !bipState.gate.enabled) return;
+    result.style.display = 'block';
+    result.style.color = ''; result.textContent = 'Hashing in your browser…';
+    const cmp = await compareLocalFile(file, bipState.gate.fingerprint);
+    if (cmp.outcome === 'MATCH') {
+      result.style.color = '#22c55e';
+      result.textContent = '✓ MATCH — your copy is byte-for-byte the file this record attested. VALID.';
+      setBipBadge('VALID');
+    } else if (cmp.outcome === 'MISMATCH') {
+      result.style.color = '#ef4444';
+      result.innerHTML = '✗ INVALID — your copy does NOT match the attested content. ' +
+        'It differs from the exact bytes the witness signed.<br>your copy: <span class="hash" style="overflow-wrap:anywhere">' +
+        cmp.localHex + '</span>';
+      setBipBadge('INVALID');
+    } else {
+      result.style.color = '#f59e0b';
+      result.textContent = '⚠ ' + cmp.reason;
+    }
   }
 
   async function verify(code) {
@@ -716,6 +884,9 @@
   });
   $('codeInput').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { const code = $('codeInput').value.trim(); if (code) verify(code); }
+  });
+  $('bcFile').addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0]; if (f) onCopyFileChosen(f);
   });
 
   // Auto-run from URL: handles BOTH /v/{code} (canonical) and bare /{code}

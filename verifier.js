@@ -61,6 +61,12 @@ const TIER_VOCAB = {
     does_not_prove: "An X.509 CA certificate chain. No cert chain was verified.",
     anchor: "The device's public key as recorded in the ZKNOT registry.",
   },
+  "WITNESSMARK-DEVICE": {
+    label: "WITNESSMARK-DEVICE",
+    proves: "The signature was produced by the secure element inside a WitnessMark device (device_id below, e.g. WM-0001, ZKNOT's designated publishing witness) whose key ZKNOT vouches for. It commits to the SHA-256 of the attested bytes, so it also fixes the content: change one byte and this record no longer matches.",
+    does_not_prove: "That any person was present, was shown the content, approved it, or authorized anything. It is a witness, not a gate — it records that this content existed in exactly this form and was signed by this device at the stated time; nothing about who wrote it, whether it is true, or what may be done with it.",
+    anchor: "The WitnessMark device's public key, published by ZKNOT and re-checked here; the signature was re-verified in your browser, and you can recompute the SHA-256 of your own copy to confirm the bytes match.",
+  },
   // "CA-ATTESTED" is intentionally NOT listed: it is gated/reserved until the
   // cert-chain provisioning SOP is confirmed live. An incoming "CA-ATTESTED"
   // record therefore falls to TIER_DEFAULT (treated as unverified identity)
@@ -177,6 +183,20 @@ export function mapApiResponse(api) {
     chain_position: api.chain_position,
     chain_integrity: api.chain_integrity,
     signed_at: api.signed_at,
+    // BIP attested-post fields (record_kind === "bip_post"). content_sha256 here
+    // is the convenience copy; the AUTHORITATIVE content hash is parsed from the
+    // signed payload (bipSignedContentHash) so the copy check compares against a
+    // value the witness actually signed, never an unsigned metadata field.
+    record_kind: api.metadata?.record_kind ?? api.record_kind,
+    content_sha256: api.metadata?.content_sha256 ?? api.content_sha256,
+    post_id: api.metadata?.post_id ?? api.post_id,
+    version: api.metadata?.version ?? api.version,
+    version_history: api.metadata?.version_history ?? api.version_history,
+    post_url: api.metadata?.post_url ?? api.post_url,
+    artifact_name: api.metadata?.artifact_name ?? api.artifact_name,
+    // Server-reported anchor state (a fact the browser cannot recompute: it needs
+    // ZKNOT's published anchor list). Displayed as data; folds into the BIP verdict.
+    key_anchored: api.key_anchored,
     // Captured ONLY to detect discrepancy — so it must be the server's answer to
     // the SAME question this browser asks. localOk is signature-only (VER-11 /
     // DT-11). Since API-01 the server's `verified` is signature AND key_anchored
@@ -186,6 +206,137 @@ export function mapApiResponse(api) {
     // Absent (pre-API-01 server): undefined -> discrepancy() declines to compare.
     server_asserted_verified: api.signature_valid,
   };
+}
+
+/* ---------------- file-comparison ("Verify your copy") ----------------------
+ * Lets a reader confirm that a file they hold is byte-for-byte the file this
+ * record already committed to. The comparison is a LOCAL equality test between
+ * two SHA-256 hashes; it is not a second attestation. It proves only sameness
+ * of bytes — never authorship, presence, approval, or the truth of the contents.
+ * ---------------------------------------------------------------------------- */
+
+/** A SHA-256 fingerprint as 64 hex chars. Case-insensitive on input; canonical
+ *  compared form is always lowercase. */
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/i;
+
+/** The canonical BIP payload tag + the field index carrying the content hash.
+ *  MUST match zknot_attest_lib.py (CANONICAL_TAG / CONTENT_HASH_FIELD). */
+const BIP_TAG = "ZKNOT-BIP1";
+const BIP_CONTENT_HASH_FIELD = 3;
+
+/**
+ * Extract the SIGNED content hash from a BIP record's signed payload. This is
+ * the authoritative value for the copy check: it lives inside the bytes the
+ * witness signed (VER-11), so a tamperer cannot move it without breaking the
+ * signature. Returns lowercase hex, or null if this is not a well-formed BIP
+ * payload (caller then offers no copy check rather than guessing).
+ * @param {Partial<VerifyRecord>} rec
+ * @returns {string|null}
+ */
+export function bipSignedContentHash(rec) {
+  if (!rec || !rec.signed_payload_hex) return null;
+  let text;
+  try {
+    text = new TextDecoder().decode(hexToBytes(rec.signed_payload_hex));
+  } catch { return null; }
+  const parts = text.split("\n");
+  if (parts[0] !== BIP_TAG || parts.length <= BIP_CONTENT_HASH_FIELD) return null;
+  const hex = (parts[BIP_CONTENT_HASH_FIELD] || "").trim().toLowerCase();
+  return SHA256_HEX_RE.test(hex) ? hex : null;
+}
+
+/**
+ * SCHEMA ADAPTER — the ONE place that decides what "the fingerprint this record
+ * committed to" means, across record kinds. Returns the canonical expected
+ * SHA-256, or null when the record carries no usable fingerprint (caller must
+ * fail closed, never guess).
+ *
+ *   BIP attested post   -> the content hash parsed from the SIGNED payload.
+ *   HashStamp doc-stamp -> file_sha256 (top level or under metadata).
+ *
+ * @param {any} rec  a mapped record or a verifyRecord() result block
+ * @returns {{algorithm: "SHA-256", expectedHex: string}|null}
+ */
+export function extractExpectedFingerprint(rec) {
+  if (!rec || typeof rec !== "object") return null;
+  const bip = bipSignedContentHash(rec);
+  if (bip) return { algorithm: /** @type {const} */ ("SHA-256"), expectedHex: bip };
+  const meta = rec.metadata && typeof rec.metadata === "object" ? rec.metadata : {};
+  const candidate = [rec.file_sha256, meta.file_sha256].find(
+    (v) => typeof v === "string" && v.trim() !== ""
+  );
+  if (!candidate) return null;
+  const hex = candidate.trim().toLowerCase();
+  return SHA256_HEX_RE.test(hex) ? { algorithm: /** @type {const} */ ("SHA-256"), expectedHex: hex } : null;
+}
+
+/**
+ * TRUST GATE — may this browser offer to compare a local file against this
+ * record? A "match" shown against a record we could not verify would be a
+ * reassuring lie, so this fails closed on every doubt.
+ *
+ * Enabled ONLY when the record verified cryptographically IN THIS BROWSER and
+ * carries a well-formed fingerprint. For BIP posts we additionally require the
+ * witness key to be ANCHORED (server-reported): an unanchored signature is not
+ * something ZKNOT vouches for, so we do not put a green "matches" beside it.
+ *
+ * @param {any} result  a verifyRecord() return value
+ * @returns {{enabled: true, fingerprint: {algorithm:"SHA-256", expectedHex:string}}
+ *          |{enabled: false, reason: string}}
+ */
+export function fileComparisonGate(result) {
+  const NO = "File comparison is unavailable because this record could not be verified in your browser.";
+  if (!result || typeof result !== "object") return { enabled: false, reason: NO };
+  if (result.verdict !== "VERIFIED_CLIENT_SIDE") return { enabled: false, reason: NO };
+
+  // BIP attested post: fingerprint from the signed payload; require anchored key.
+  if (result.kind === "bip_post" && result.bip) {
+    if (result.bip.key_anchored !== true) {
+      return { enabled: false, reason: "This post's signature is valid but its key is not one ZKNOT vouches for (not device-anchored), so a copy match is not offered." };
+    }
+    const fp = extractExpectedFingerprint(result.bip);
+    return fp ? { enabled: true, fingerprint: fp } : { enabled: false, reason: NO };
+  }
+
+  // HashStamp document-timestamp.
+  if (result.kind === "document_timestamp" && result.docTimestamp) {
+    if (result.docTimestamp.chain_integrity === false) return { enabled: false, reason: NO };
+    if (result.docTimestamp.assurance?.chain_linkage?.startsWith("BROKEN")) return { enabled: false, reason: NO };
+    const fp = extractExpectedFingerprint(result.docTimestamp);
+    return fp ? { enabled: true, fingerprint: fp } : { enabled: false, reason: NO };
+  }
+
+  return { enabled: false, reason: NO };
+}
+
+/**
+ * Compare a local File/Blob against an expected fingerprint. Runs entirely in
+ * this browser: the bytes go to WebCrypto and nowhere else. Never throws — a
+ * read failure returns an honest "could not compare", which is NOT a statement
+ * about the file's validity.
+ * @param {Blob} file
+ * @param {{algorithm:"SHA-256", expectedHex:string}} expected
+ * @returns {Promise<{outcome:"MATCH"|"MISMATCH", localHex:string}|{outcome:"ERROR", reason:string}>}
+ */
+export async function compareLocalFile(file, expected) {
+  if (!file || typeof file.arrayBuffer !== "function") {
+    return { outcome: /** @type {const} */ ("ERROR"), reason: "No readable file was selected." };
+  }
+  if (!expected || !SHA256_HEX_RE.test(expected.expectedHex ?? "")) {
+    return { outcome: /** @type {const} */ ("ERROR"), reason: "This record does not carry a usable SHA-256 fingerprint to compare against." };
+  }
+  let localHex;
+  try {
+    const buf = await file.arrayBuffer();
+    localHex = bytesToHex(await subtle.digest("SHA-256", buf));
+  } catch (e) {
+    const msg = /** @type {Error} */ (e)?.message || String(e);
+    return { outcome: /** @type {const} */ ("ERROR"),
+      reason: `This file could not be read in your browser (${msg}). This says nothing about whether the file is valid.` };
+  }
+  return localHex === expected.expectedHex
+    ? { outcome: /** @type {const} */ ("MATCH"), localHex }
+    : { outcome: /** @type {const} */ ("MISMATCH"), localHex };
 }
 
 /* ---------------- encoding helpers ---------------- */
@@ -279,12 +430,28 @@ async function importP256(pubkeyRaw) {
 export async function verifyRecord(rec) {
   /** @type {{id: string, pass: boolean|null, detail: string}[]} */
   const checks = [];
+  // BIP attested-post block — carried on every return so the witness card can
+  // render (and show INVALID) even on a failed/incomplete record.
+  const isBip = rec.record_kind === "bip_post";
+  const bipBlock = isBip ? {
+    post_id: rec.post_id ?? null,
+    version: rec.version ?? null,
+    version_history: Array.isArray(rec.version_history) ? rec.version_history : [],
+    post_url: rec.post_url ?? null,
+    content_sha256: bipSignedContentHash(rec) ?? rec.content_sha256 ?? null,
+    signed_payload_hex: rec.signed_payload_hex ?? null, // for extractExpectedFingerprint
+    witness: rec.device_id ?? null,
+    key_anchored: rec.key_anchored === true,
+    signed_at: rec.signed_at ?? null,
+  } : null;
+  const bipExtra = isBip ? { kind: "bip_post", bip: bipBlock } : {};
   const fail = (/** @type {string} */ headline) => ({
     verdict: /** @type {const} */ ("FAILED"),
     checks,
     headline,
     badges: badgesOf(rec),
     server_discrepancy: discrepancy(rec, false),
+    ...bipExtra,
   });
   const cannot = (/** @type {string} */ headline) => ({
     verdict: /** @type {const} */ ("CANNOT_VERIFY"),
@@ -292,6 +459,7 @@ export async function verifyRecord(rec) {
     headline,
     badges: badgesOf(rec),
     server_discrepancy: discrepancy(rec, null),
+    ...bipExtra,
   });
 
   // VER-10 — schema / version. Unknown future version: say so, don't guess.
@@ -364,6 +532,7 @@ export async function verifyRecord(rec) {
     headline: headlineOf(rec), // VER-04 / VER-25: maps 1:1 to the binding fields
     badges: badgesOf(rec),
     server_discrepancy: discrepancy(rec, true),
+    ...bipExtra,
   };
 }
 
