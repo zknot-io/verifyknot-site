@@ -53,8 +53,25 @@ const TIER_VOCAB = {
     label: "REGISTRY-ASSERTED",
     proves: "The record was signed by ZKNOT's published registry key (signer id = device_id, e.g. zknot-registry-v1). The registry vouches that this registration exists and has not been altered.",
     does_not_prove: "That an independent device with its own secure element signed it. It is NOT a device-held key and NOT a human-presence event.",
-    anchor: "Verify the carried public key against ZKNOT's published registry public key, obtained out-of-band.",
+    // ANCHOR CORRECTED 2026-07-30 (founder-ruled). The previous text read "Verify the
+    // carried public key against ZKNOT's published registry public key, obtained
+    // out-of-band." That instruction had no referent: the registry public key
+    // (ea5c3036…5a7d) is published NOWHERE a reader could reach it. Checked before
+    // rewriting — zknot-api exposes no key-publication route (/attest, /chain/verify,
+    // /health, /healthz, /seal/register, /{short_code}/puf/verify, /{short_code}/register,
+    // /v1/units, /verify/{code}); the hex appears in zero files across ~/zknot-site,
+    // ~/verifyknot-site and ~/hashstamp-site; and zknot-site's own zkkey.html and
+    // trustseal.html carry no key material at all.
+    // An anchor a skeptic CANNOT follow is worse than a weak one honestly stated: it
+    // reads as independent grounding while providing none. This now says what is
+    // actually true today and names what would make it stronger.
+    anchor: "Two different things, and only one of them is independent. Your browser re-verified the signature itself against the key carried in the record — that part you just watched happen. Whether that key is one ZKNOT vouches for is reported BY ZKNOT (the record's key_anchored and anchor fields); ZKNOT does not yet publish the registry public key out-of-band, so there is currently no source outside ZKNOT against which you can check the key's identity. Until that key is published, treat this rung's identity claim as ZKNOT's own assertion.",
   },
+  // ⚠ REGISTERED CARRIES THE IDENTICAL DEFECT AND IS DELIBERATELY NOT FIXED HERE.
+  // "The device's public key as recorded in the ZKNOT registry" is equally unfollowable
+  // — there is no reader-reachable registry to consult (same evidence as above). It is
+  // left alone because the 2026-07-30 ruling named registry-asserted only, and the tier
+  // ladder is claims authority, not a typo surface. Fix it deliberately or not at all.
   "REGISTERED": {
     label: "REGISTERED",
     proves: "The signing device's own keypair is on file in the ZKNOT registry.",
