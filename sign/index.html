@@ -263,6 +263,20 @@
 
     function handleLine(line){
       if(line.includes("BOOT")){ if(challengeHex && awaiting) sendLine(challengeHex); }
+      // Device-side failures (code.py:65, :112-114). Nothing here recognised them, so a
+      // unit with a dead secure element left this page waiting for a SIG that could never
+      // arrive. INIT_FAIL is terminal — the device exits its main loop, so stop resending.
+      if(line.includes("INIT_FAIL") || line.includes("SIGN_FAIL")){
+        const fatal=line.includes("INIT_FAIL");
+        awaiting=false;
+        if(resendTimer) clearInterval(resendTimer);
+        logLine("!!", line.trim());
+        renderFail(fatal
+          ? "Device error: the secure element did not start, so this unit cannot sign until it is power-cycled. Nothing was signed and no record was created — this is a hardware fault, not a failed verification."
+          : "Device error: the signing attempt failed on the device. Nothing was signed and no record was created. Press again; if it keeps failing, the unit needs attention.");
+        setStatus("Device error","err");
+        return;
+      }
       const m=line.match(/SIG\s+([0-9A-Fa-f]+)\s+([0-9a-fA-F]{64})\s+([0-9a-fA-F]{128})/);
       if(!m) return;
       const serial=m[1], chEcho=m[2], sigHex=m[3];

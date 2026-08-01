@@ -304,6 +304,19 @@
       if (line.includes("BOOT")) {
         if (currentChallengeHex && awaiting) sendLine(currentChallengeHex);
       }
+      // Device-side failures. The firmware emits these (code.py:65, :112-114) and
+      // nothing here used to recognise them, so a unit whose secure element is dead
+      // left this page waiting for a SIG that could never arrive — spinning forever
+      // with no explanation. INIT_FAIL is terminal: the device raises SystemExit and
+      // leaves its main loop, so retransmitting is futile and the timer must stop.
+      if (line.includes("INIT_FAIL") || line.includes("SIGN_FAIL")) {
+        const fatal = line.includes("INIT_FAIL");
+        awaiting = false;
+        if (window._resendTimer) clearInterval(window._resendTimer);
+        logLine("!!", line.trim());
+        renderDeviceFault(fatal);
+        return;
+      }
       // Find the SIG triplet ANYWHERE in the line. CircuitPython prepends an OSC
       // terminal-title escape sequence (ESC]0;code.py|10.2.0...) to console output,
       // so the line does NOT start with "SIG". Match the pattern instead of the prefix.
@@ -352,6 +365,26 @@
             so its signature can't be checked here. The device signed — but this verifier has no
             public key to check it against.</p>
         </div>`;
+    }
+
+    // A DEVICE fault, not a verification result. Deliberately NOT rendered as
+    // "VERIFICATION FAILED": nothing was verified and nothing failed to verify.
+    // Conflating a broken secure element with a bad signature would tell the
+    // visitor something false about a record that does not exist.
+    function renderDeviceFault(fatal) {
+      el("result").innerHTML = `
+        <div class="verdict cannot">
+          <h2>DEVICE ERROR</h2>
+          <p class="headline">The device reported a fault instead of a signature. This is a
+            problem with the hardware in front of you — <b>not</b> a failed verification, and
+            not a statement about any record.</p>
+          <p class="headline">${fatal
+            ? `Its secure element did not start, so it cannot sign at all until it is
+               power-cycled. If that does not clear it, the unit needs attention.`
+            : `The signing attempt failed. Try pressing again; if it keeps failing, the unit
+               needs attention.`}</p>
+        </div>`;
+      setStatus("Device error", "err");
     }
 
     function renderVerdict(r) {
