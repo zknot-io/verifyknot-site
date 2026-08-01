@@ -113,6 +113,26 @@ const TIER_VOCAB = {
   // rather than rendering a claim we cannot yet stand behind.
 };
 
+/**
+ * A-3 (DECISION-ATTESTATION-LINE-001 §3, RULED 2026-07-31): what an ABSENT tier
+ * renders as. Distinct from TIER_DEFAULT, which is for a tier this verifier was
+ * handed and does not recognise — a different fact about a different party.
+ *
+ * The rung this replaces was a lie by default. `?? "SELF-ASSERTED"` told a
+ * PowerVerify owner their record sat on the weakest rung of the identity ladder,
+ * when a passive article has no signing key and therefore is not on the ladder at
+ * all. "Weakest" and "not applicable" are not the same statement, and the page
+ * has been making the wrong one on every PowerVerify verify.
+ *
+ * @type {TierInfo}
+ */
+const TIER_ABSENT = {
+  label: "NO IDENTITY TIER",
+  proves: "Nothing about identity — and this record does not claim to. It asserts no identity tier, and this verifier will not invent one for it.",
+  does_not_prove: "That the record is weak. An absent tier is NOT the bottom rung: it means identity is not what this record is about. A passive article has no signing key of its own, so it has no rung to stand on.",
+  anchor: "Whatever this record does establish is in the fields below, and your browser checked it. Identity is not among them — look to the record's own type for what it is actually asserting.",
+};
+
 /** Safe fallback for any tier this verifier does not recognize. @type {TierInfo} */
 const TIER_DEFAULT = {
   label: "UNVERIFIED",
@@ -158,7 +178,15 @@ function isDocTimestamp(rec) {
  * @returns {TierInfo & {key: string}}
  */
 function tierOf(rec) {
-  const tier = rec.identity_tier ?? "SELF-ASSERTED";
+  // A-3. Absent and unrecognised are DIFFERENT states and must not share a
+  // rendering. Absent means the record asserts no tier — correct and expected
+  // for a passive article. Unrecognised means this verifier does not know the
+  // tier it was handed, which is a verifier-side gap. Collapsing them told
+  // PowerVerify owners their record was the weakest rung; it has no rung.
+  if (rec.identity_tier == null || rec.identity_tier === "") {
+    return { key: null, ...TIER_ABSENT };
+  }
+  const tier = rec.identity_tier;
   if (Object.prototype.hasOwnProperty.call(TIER_VOCAB, tier)) {
     return { key: tier, ...TIER_VOCAB[tier] };
   }
@@ -205,7 +233,12 @@ export function mapApiResponse(api) {
     record_version: api.record_version ?? api.metadata?.record_version ?? "1.0",
     short_code: api.short_code ?? api.code,
     device_id: api.device_id,
-    identity_tier: api.identity_tier ?? api.metadata?.identity_tier ?? "SELF-ASSERTED",
+    // A-3 (DECISION-ATTESTATION-LINE-001 §3, RULED 2026-07-31): an absent
+    // identity_tier renders as ABSENT. The old `?? "SELF-ASSERTED"` invented the
+    // weakest rung for records that assert no tier at all — PowerVerify returns
+    // null because a PASSIVE ARTICLE HAS NO TIER, and this page contradicted that
+    // ruling on every PowerVerify verify. `?? null` is explicit, not incidental.
+    identity_tier: api.identity_tier ?? api.metadata?.identity_tier ?? null,
     presence_binding_type: api.presence_binding_type ?? api.metadata?.presence_binding_type ?? "none",
     content_binding_type: api.content_binding_type ?? api.metadata?.content_binding_type ?? "none",
     signed_payload_hex: api.signed_payload_hex ?? api.signed_payload ?? api.metadata?.signed_payload_hex,
