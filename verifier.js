@@ -67,6 +67,29 @@ const TIER_VOCAB = {
     // actually true today and names what would make it stronger.
     anchor: "Two different things, and only one of them is independent. Your browser re-verified the signature itself against the key carried in the record — that part you just watched happen. Whether that key is one ZKNOT vouches for is reported BY ZKNOT (the record's key_anchored and anchor fields); ZKNOT does not yet publish the registry public key out-of-band, so there is currently no source outside ZKNOT against which you can check the key's identity. Until that key is published, treat this rung's identity claim as ZKNOT's own assertion.",
   },
+  // KEY-REGISTERED — the rung between registry-asserted and REGISTERED, added 2026-08-01.
+  //
+  // WHY IT EXISTS. Until now the API derived REGISTERED for ANY device-signed record whose
+  // key was anchored, with no discriminator of any kind: a hardened Ostensor and a
+  // deliberately-open SelfKnot presented identically. That is an issuance defect, not a
+  // presentation one — the rail was vouching for the DEVICE when all it had checked was the
+  // KEY. See FINDING-SELFKNOT-CONTAINMENT-001 §3.
+  //
+  // The distinction this rung draws is exactly that one: ZKNOT holds this key on file, and
+  // says nothing about the machine around it. That is the honest ceiling for any product
+  // whose firmware the owner is invited to replace.
+  //
+  // Emitted for every device-signed, anchored key whose product is NOT on the API's
+  // HARDENED_PRODUCTS allowlist. Fail-closed by construction: a new SKU earns this rung by
+  // default and must be promoted to REGISTERED deliberately, never by omission.
+  "KEY-REGISTERED": {
+    label: "KEY-REGISTERED",
+    proves: "The KEY that signed this is on file in the ZKNOT registry and was generated inside a secure element it has never left. The registry vouches for the key.",
+    does_not_prove: "That ZKNOT vouches for the DEVICE holding it. This device's firmware is open and user-replaceable by design; a modified unit signs with the same registered key. No secure boot, no readout protection, no tamper response.",
+    // Deliberately NOT "check it against the registry" — that instruction has no referent
+    // (see the registry-asserted note above) and it is not being reintroduced on a new rung.
+    anchor: "Two different things, and only one of them is independent. Your browser re-verified the signature itself against the key carried in the record — that part you just watched happen. Whether that key is one ZKNOT vouches for is reported BY ZKNOT (the record's key_anchored and anchor fields); ZKNOT does not publish the registry out-of-band, so there is currently no source outside ZKNOT against which you can check the key's identity.",
+  },
   // ⚠ REGISTERED CARRIES THE IDENTICAL DEFECT AND IS DELIBERATELY NOT FIXED HERE.
   // "The device's public key as recorded in the ZKNOT registry" is equally unfollowable
   // — there is no reader-reachable registry to consult (same evidence as above). It is
