@@ -125,11 +125,47 @@
 
     // pubkey source — bundled today, swap to api.zknot.io lookup later (one function)
     const BUNDLED_PUBKEYS = {
-      "01234DF53F8AF547EE":
+      "012337d1a9f0eb45ee":
+        "fc9e498d9a69f93a3f2bb5902faf4b33c83a1ae668a12260c24c528916819d28d3f07c20b80483228e2ce36fbe1508f0e335d0cabdc42f48e7da7b9b30bd6289",
+      "0123fc0bbdc63b4dee":
+        "b4def69ee966b79a4dbea20c1cb2fab5baebc9b2a17037a969cebc9d779e8621f8cc8e41c32d774254bfc9b274e126e4a145a82c6e1e62c2541460e2c82725a5",
+      "01231e45e5c5b0f8ee":
+        "c326087a8832be1e0b93a2ad96c79b1e3675644c0c3b65291fb9450cd20444a610922a94581242e979fc25e12021c7f70506de26e106807d7116efa4364c4077",
+      "0123c9eaa2bdd913ee":
+        "2210f2572607d05b45738ff7d47b48c1fa7845a79c8d1eb2097d9710a22c8e89796d4da3c9fdad3a1f6a78b6837f3a7e87269eda191017b6d78a727a869bb215",
+      "01234df53f8af547ee":
         "683a08ef83be128fb1640ecb9c21f0f474e1dc2e29b7d9332c68fa0a05644b8310004516c96225a85e329cdf5f882e1f4bdadb22076ff2b8ac176810fc4909eb",
+      "0123927f68f8c91fee":
+        "f18259c2fa4b375bae80c4bb4871c9aec8c2187df863cb71ba950aaef417b4d9192916b2e4b0dc6c98d9c588d00106e41fc77fdf01b99985e86d5ee9d7d8ed1a",
+      "0123d8623398c140ee":
+        "61b9718fa46028820b7255a9f07a5305d2bf1d20235be776e0fff2eff50f4efa9bca24d91f83bad1eef26789d29fc4b6d3819fcdaf06ab2c099fe68690249a89",
+      "0123046da0a2f3b8ee":
+        "06aa548bda1e5e91dfdfdc47d15e6185cd0937e3f43ead61700c20ccc3e3d6100f6856481a5a63e5cc09ac5e40befcd6ae2562bbfd230226165662f89e7a3ac8",
+      "01232753aeb3144fee":
+        "1663deefc7e7ea328d1b4d16022de6288874c84096fbfba0adf0c243510b45a37d90088e510e1988612f942f904f4a8f2ad60f65319c9c26a149fafa32bd38c6",
+      "01235a56d8bdebaaee":
+        "040b1a0f02bab8923e08ff9566d1e90a180e1c12e5563deec758119a4794418e88755c71d7bd86ee37fd8c8c39c628dd05092714d922202344cf7e99809800ed",
+      "0123e6c5bf6590a7ee":
+        "c946c11801b6d6259c859a25df7eea1ed2cd5ec5397713b8e83438ea8a3edd50a7e193507dd1c7e1b074430abaf71ac22ddc18c79237fe22c0a54ab54c5358d4",
+      "01232c48e185c4b8ee":
+        "bd74ebeebc4d78e2b254cb2f983d7fafa83ac1405d50e7a2ac9a383047e0850967ca768f1c03c778b253ee1cfcc872acf6c465cdf2b25dddf31b664d7e95c6ed",
+      "01236eb5f1fad2ffee":
+        "9e8faddc24ac7a264d51fcad00ad8a835c0b63d6384d88f520f986e64c42413297c8785c978b2649e1037d9c6391818fe5f97f180c597437efdf032e39edae59",
+      "01231c60cbb0e64aee":
+        "666025977663bf4f25c091e9721dcf181a4a70583b7182f77e73d37ccb1dd97d7b02552d7704a2737487f55ab589c2fbfcd59e4d7f2ab0c6d46cf20e30fcd103",
+      "0123c1b73aaf428cee":
+        "78a2a3cd2e56d1871ea88644dd8a8beb97c1578b2245eba265f006b91bf17def1e1fcae5831177240ba6cabfdb9d542bc97f3bc9270899a9e18dba447fa3b937",
+      "012317288955c4ccee":
+        "cf690e96f9b9d9c94854f03486463e76e0718e91c00092190c95c9821563af4b889c0d80e1f0bc7fac41ddce63c7982c760448c5b0f8aee22726d5bc68040627",
+      "012383001c5404a2ee":
+        "da8473fd1f4cdc37f0c39067741811cb9d127a79feac871714de63b9324d5f1aa4e2dff813c477b618ddcc0b49c360e0e3b549c38f67eed0e0e29ef8f84ba7e3",
+      "0123c02ed2dd3a70ee":
+        "d5c0913e1ad930100e92ff1020052688080e3518573f07d2db1bba1ba18cf1de7487efcafb8e6a8b1bf27a7cfe98696ff18e275cddbe05ed4c8727a805a5eae3",
+      "01237eaa3259e0ddee":
+        "2368122a81f0d26790c4db5e404e56c07b8e4ccac6d61696c7992ebc1be75f0265299ef8786c2c9cb8f13ca9451a3f511fca8a1ad1b8ff1709bdddf0eebc08e8",
     };
     function pubkeyForSerial(serial) {
-      const xy = BUNDLED_PUBKEYS[String(serial).toUpperCase()];
+      const xy = BUNDLED_PUBKEYS[String(serial).toLowerCase()];
       return xy ? "04" + xy : null;
     }
 
@@ -259,8 +295,14 @@
         signature: sigHex,
         public_key: pub,
         signed_at: new Date().toISOString(),
+        // identity_tier is NOT sent. app/routers/attest.py:106 refuses reserved metadata
+        // keys with a 403 — "a record may not carry its own verification result" — and
+        // identity_tier is one of them. The server derives it at verify time instead
+        // (verify.py:102-108). With no provision_method on the record the derivation
+        // returns null, which the deployed verifier renders as SELF-ASSERTED: the same
+        // answer this line used to assert, now computed rather than claimed.
         metadata:{ product:"Rev2-Attestor", document_name:fileName, document_sha256:docHashHex,
-                   signed_payload_hex:docHashHex, identity_tier:"SELF-ASSERTED",
+                   signed_payload_hex:docHashHex,
                    presence_binding_type:"firmware-mediated", content_binding_type:"none" },
       };
       try{
