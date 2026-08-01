@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ZKNOT™ Verify — Live Device Attestation</title>
-  <meta name="description" content="Connect a ZKNOT Attestor, press its button, and verify the signature in your own browser. The math runs on your machine, not ours." />
+  <meta name="description" content="Connect a ZKNOT SelfKnot, press its button, and verify the signature in your own browser. The math runs on your machine, not ours." />
   <link rel="icon" href="https://zknot.io/favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -105,8 +105,8 @@
   </nav>
   <main>
     <div class="eyebrow">Verify a live device</div>
-    <h1>Connect your Attestor and watch it prove itself.</h1>
-    <p class="lede">Plug in a ZKNOT Attestor, press its button, and the signature is checked
+    <h1>Connect your SelfKnot and watch it prove itself.</h1>
+    <p class="lede">Plug in a ZKNOT SelfKnot, press its button, and the signature is checked
       <em>in your browser</em> against the device's enrolled public key. The verdict below is
       computed on your machine — not asserted by our server.</p>
 
@@ -199,8 +199,8 @@
       return xy ? "04" + xy : null;                     // 04||X||Y, 65 bytes
     }
 
-    // ── honest binding declaration for the Tier-0 Attestor ────────────────────
-    const ATTESTOR_BINDING = {
+    // ── honest binding declaration for the Tier-0 SelfKnot ────────────────────
+    const SELFKNOT_BINDING = {
       record_version: "1.0",
       identity_tier: "SELF-ASSERTED",
       presence_binding_type: "firmware-mediated",   // button press enforced by firmware, not silicon
@@ -330,9 +330,9 @@
         return;
       }
       const rec = {
-        ...ATTESTOR_BINDING,
+        ...SELFKNOT_BINDING,
         short_code: serial,
-        device_id: "Attestor " + serial,
+        device_id: "SelfKnot " + serial,
         signed_payload_hex: currentPayloadHex,
         challenge_hash: currentChallengeHex,
         signature: sigHex,
