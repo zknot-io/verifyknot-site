@@ -95,17 +95,55 @@ const TIER_VOCAB = {
   // — there is no reader-reachable registry to consult (same evidence as above). It is
   // left alone because the 2026-07-30 ruling named registry-asserted only, and the tier
   // ladder is claims authority, not a typo surface. Fix it deliberately or not at all.
+  // does_not_prove WIDENED 2026-08-05. It previously read only "An X.509 CA
+  // certificate chain. No cert chain was verified." — which is true and radically
+  // incomplete. Every article standing on this rung today (WM-0001, WM-0002,
+  // OS-0004; measured live) is TZEN=0 / RDP0, and CAP-ENG-WitnessMark-001 v2's
+  // AS-BUILT column records "MCU flash is readable — RDP0" and that no MCU-held
+  // signing key exists. The rung BELOW this one, KEY-REGISTERED, spells those
+  // limits out; this one said nothing, so a skeptic reading a REGISTERED record
+  // learned only that no certificate chain was checked.
+  //
+  // That is the mirror of the VT-3 defect: there a disclaimer was FALSE of the
+  // article, here the true disclaimers were ABSENT. Same family — the rung's
+  // honest-limits line did not describe the article standing on it.
+  //
+  // Phrased as what REGISTRATION does not establish, deliberately, rather than as
+  // what today's hardware lacks. A product-specific disclaimer ("no secure boot")
+  // would become FALSE the moment a secure-booted article ships on this same rung,
+  // which is precisely how VT-3 happened. This wording stays true either way and
+  // sends the reader to the product's own claims for hardware assurance.
   "REGISTERED": {
     label: "REGISTERED",
     proves: "The signing device's own keypair is on file in the ZKNOT registry.",
-    does_not_prove: "An X.509 CA certificate chain. No cert chain was verified.",
+    does_not_prove: "An X.509 CA certificate chain — none was verified. It also establishes nothing about the DEVICE around that key: not that its firmware is attested or resistant to substitution, not that its memory is read-protected, not that the key is bound to this particular board, and not that any person was present when it signed. Registration vouches for the key; what surrounds the key is a property of the specific product, stated in that product's own claims and not by this rung.",
     anchor: "The device's public key as recorded in the ZKNOT registry.",
   },
-  "WITNESSMARK-DEVICE": {
-    label: "WITNESSMARK-DEVICE",
-    proves: "The signature was produced by the secure element inside a WitnessMark device (device_id below, e.g. WM-0001, ZKNOT's designated publishing witness) whose key ZKNOT vouches for. It commits to the SHA-256 of the attested bytes, so it also fixes the content: change one byte and this record no longer matches.",
+  // RENAMED 2026-08-05: was "WITNESSMARK-DEVICE", key and label both.
+  //
+  // WITNESSMARK failed trademark knockout against a live third-party federal
+  // registration in classes 9 + 42, and the product is now Ostensor. A rendered
+  // tier label is public-facing copy, which is a different thing from the
+  // WITNESSMARK_UNIT api enum — CLAUDE.md protects that enum as a live production
+  // value with display-name mapping only, and it is NOT touched by this change.
+  // WM- serials likewise stay: CLAUDE.md keeps them on existing units permanently.
+  //
+  // SAFE BECAUSE MEASURED, not because it looked safe. Swept production
+  // 2026-08-05: identity_tier across all artifacts is (null) x66, SELF-ASSERTED
+  // x6, registry-asserted x5 — ZERO records carry this tier. And no code path
+  // emits it: routers/verify.py::_identity_tier returns only registry-asserted,
+  // KEY-REGISTERED or REGISTERED, and never CA-ATTESTED. So this entry was
+  // UNREACHABLE — nothing rendered it and no buyer has seen it. Renaming an
+  // unreachable entry drops no record to TIER_DEFAULT.
+  //
+  // The vocabulary is kept rather than deleted because the role is real and still
+  // live: WM-0002 is the designated publishing witness for the BIP loop. If a
+  // record is ever minted on this rung, it earns it deliberately.
+  "PUBLISHING-WITNESS": {
+    label: "PUBLISHING-WITNESS",
+    proves: "The signature was produced by the secure element inside an Ostensor device (device_id below, e.g. WM-0002, ZKNOT's designated publishing witness) whose key ZKNOT vouches for. It commits to the SHA-256 of the attested bytes, so it also fixes the content: change one byte and this record no longer matches.",
     does_not_prove: "That any person was present, was shown the content, approved it, or authorized anything. It is a witness, not a gate — it records that this content existed in exactly this form and was signed by this device at the stated time; nothing about who wrote it, whether it is true, or what may be done with it.",
-    anchor: "The WitnessMark device's public key, published by ZKNOT and re-checked here; the signature was re-verified in your browser, and you can recompute the SHA-256 of your own copy to confirm the bytes match.",
+    anchor: "The publishing witness device's public key, published by ZKNOT and re-checked here; the signature was re-verified in your browser, and you can recompute the SHA-256 of your own copy to confirm the bytes match.",
   },
   // "CA-ATTESTED" is intentionally NOT listed: it is gated/reserved until the
   // cert-chain provisioning SOP is confirmed live. An incoming "CA-ATTESTED"
