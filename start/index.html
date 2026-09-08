@@ -199,6 +199,104 @@
       return xy ? "04" + xy : null;                     // 04||X||Y, 65 bytes
     }
 
+    // ══ OSTENSOR PATH ═══════════════════════════════════════════════════════════
+    //
+    // Added 2026-08-10. Before this, /start could not attest an Ostensor AT ALL: the
+    // lookup above is a hardcoded table of nineteen 9-byte ATECC serials with the live
+    // fetch commented out, so no OPTIGA article could appear in it. The button did nothing
+    // and there was no path by which it could ever have done anything.
+    //
+    // Ostensor speaks a DIFFERENT protocol from SelfKnot:
+    //   SelfKnot   send <64hex digest>       -> "SIG <serial> <hash> <128hex raw>"
+    //   Ostensor   send "ARM <64hex digest>" -> "ARMED press-confirm"
+    //                                        -> [HUMAN PRESS]
+    //                                        -> "SIG=<DER hex>"
+    // Different verb, different reply, DER instead of raw r||s, no serial in the line, and
+    // a mandatory physical press. verifier.js's signatureToRaw() already accepts DER, so
+    // the RECORD shape is identical once the transport differs.
+    //
+    // IDENTITY RESOLVES BY THE KEY THE DEVICE PRESENTS, never by a serial it claims. A
+    // serial lookup lets the device choose which record it is compared against; resolving
+    // by key can only land on the record already holding that key, so lookup and
+    // verification are one operation.
+    const OSTENSOR_API = "https://api.zknot.io/v1/units/by-key";
+
+    // Per-connection Ostensor state. `armed` gates the SIG= branch so a stray line from a
+    // SelfKnot session can never be read as an Ostensor signature.
+    const ostensorState = { is: false, pubHex: null, rec: null, chain: null, armed: false };
+
+    // Detect: Ostensor answers PING with PONG; SelfKnot does not.
+    async function detectOstensor() {
+      return !!(await askAndWait("PING", /PONG/i, 1800));
+    }
+
+    // Pull the E0E0 device certificate and derive the uncompressed SEC1 public key.
+    // The reply is "CERT=<hex>" where the payload is a 9-byte OPTIGA object header
+    // followed by the X.509 DER. Take the payload AFTER the '=' — 'C' and 'E' are
+    // themselves hex digits, so filtering hex out of the whole line shifts every byte.
+    async function ostensorIdentity() {
+      const line = await askAndWait("CERT", /CERT=[0-9a-fA-F]{200,}/, 7000);
+      if (!line) return null;
+      const hex = (line.match(/CERT=([0-9a-fA-F]+)/) || [])[1];
+      if (!hex) return null;
+      const der = hexToBytes(hex).slice(9);
+      // The SubjectPublicKeyInfo BIT STRING ends with the uncompressed point 04||X||Y.
+      // Locate it by its 0x04 marker at a 65-byte tail rather than parsing full ASN.1:
+      // the key is the LAST 65 bytes of the SPKI, and the SPKI precedes the extensions.
+      let pub = null;
+      for (let i = 0; i + 65 <= der.length; i++) {
+        if (der[i] === 0x04 && i >= 2 && der[i - 1] === 0x00 && der[i - 2] === 0x42) {
+          pub = der.slice(i, i + 65);
+          break;
+        }
+      }
+      return pub ? { pubHex: bytesToHex(pub), der } : null;
+    }
+
+    // CHAIN STATUS IS EXPLICIT, NEVER SILENT.
+    //
+    // The device certificate is issued by "Infineon OPTIGA(TM) Trust M CA 306"
+    // (ecdsa-with-SHA384). Validating that chain is what turns "a key matching a record"
+    // into "a key Infineon attests lives in secure hardware" — the difference between
+    // proving custody and proving a lookup succeeded.
+    //
+    // THAT CA CERTIFICATE IS NOT PROVISIONED HERE. The vault holds only
+    // OPTIGA_Trust_M_Infineon_Test_CA.pem — a TEST CA, and chaining to the wrong root is
+    // worse than not chaining at all, because it renders as validated. So this returns an
+    // explicit unverified state that the page DISPLAYS, rather than omitting the question.
+    // verifier.js's honest-limits line for REGISTERED already says "No cert chain was
+    // verified"; this keeps the page consistent with it instead of quietly implying more.
+    function certChainStatus() {
+      return {
+        verified: false,
+        reason: "Infineon CA 306 certificate is not provisioned in this page, so the " +
+                "issuer signature was NOT checked. The key matches a registered record — " +
+                "that is a registry match, not proof of secure-hardware custody.",
+      };
+    }
+
+    async function resolveByKey(pubHex) {
+      try {
+        const r = await fetch(`${OSTENSOR_API}/${pubHex}`);
+        if (r.status === 404) {
+          // A 404 is ambiguous and the two meanings are opposite. Our handler answers
+          // "No record carries this key" — a genuine miss, the device is not enrolled.
+          // A MISSING ROUTE answers FastAPI's default {"detail":"Not Found"} — the registry
+          // is not serving this endpoint, which says nothing at all about the device.
+          // Rendering the second as "not a registered unit" would blame a good article for
+          // a deployment gap.
+          let detail = "";
+          try { detail = (await r.json()).detail || ""; } catch (e) { /* non-JSON body */ }
+          if (/no record carries this key/i.test(detail)) return { found: false };
+          return { error: `registry did not answer this lookup (404: ${detail || "Not Found"})` };
+        }
+        if (!r.ok) return { error: `lookup HTTP ${r.status}` };
+        return { found: true, rec: await r.json() };
+      } catch (e) {
+        return { error: e.message };
+      }
+    }
+
     // ── honest binding declaration for the Tier-0 SelfKnot ────────────────────
     const SELFKNOT_BINDING = {
       record_version: "1.0",
@@ -250,8 +348,27 @@
       el("log-card").classList.remove("hidden");
       setStatus("Connected — preparing challenge…", "live");
       readLoop();                       // start reading in the background
-      setTimeout(newChallenge, 1200);   // let any reset settle, then send challenge
+      setTimeout(startFlow, 1200);      // let any reset settle, then pick the device path
     }
+    // Which device is on the other end? Ostensor and SelfKnot speak different protocols,
+    // so the page probes rather than assuming. PING/PONG is the discriminator.
+    async function startFlow() {
+      ostensorState.is = await detectOstensor();
+      if (!ostensorState.is) return newChallenge();          // SelfKnot path, unchanged
+
+      setStatus("Ostensor detected — reading its certificate…", "live");
+      const id = await ostensorIdentity();
+      if (!id) { renderOstensorState("no-cert"); setStatus("Connected", "live"); return; }
+      ostensorState.pubHex = id.pubHex;
+      ostensorState.chain = certChainStatus();
+
+      const res = await resolveByKey(id.pubHex);
+      if (res.error) { renderOstensorState("lookup-error"); setStatus("Connected", "live"); return; }
+      if (!res.found) { renderOstensorState("unregistered"); setStatus("Connected", "live"); return; }
+      ostensorState.rec = res.rec;
+      await ostensorChallenge();
+    }
+
 
     async function readLoop() {
       reader = port.readable.getReader();
@@ -299,7 +416,40 @@
       setStatus("Waiting for button press…", "wait");
     }
 
+    // Line waiters — used by the Ostensor request/response verbs (PING, CERT, ID, ARM).
+    // Registered first so a waiter consumes its own reply before the SelfKnot matchers see
+    // it; a waiter that does not match passes the line straight through.
+    let lineWaiters = [];
+    function askAndWait(cmd, re, ms) {
+      return new Promise((resolve) => {
+        const w = { re, resolve, done: false };
+        lineWaiters.push(w);
+        sendLine(cmd);
+        setTimeout(() => {
+          if (!w.done) { w.done = true; lineWaiters = lineWaiters.filter((x) => x !== w); resolve(null); }
+        }, ms);
+      });
+    }
+
     function handleLine(line) {
+      for (const w of [...lineWaiters]) {
+        if (!w.done && w.re.test(line)) {
+          w.done = true;
+          lineWaiters = lineWaiters.filter((x) => x !== w);
+          w.resolve(line);
+          return;
+        }
+      }
+      // OSTENSOR signature line: "SIG=<DER hex>". Distinct from SelfKnot's
+      // "SIG <serial> <hash> <raw>" triplet below — different shape, no serial, DER.
+      const om = line.match(/SIG=([0-9a-fA-F]{100,})/);
+      if (om && ostensorState.armed) {
+        ostensorState.armed = false;
+        awaiting = false;
+        if (window._resendTimer) clearInterval(window._resendTimer);
+        onOstensorSignature(om[1]);
+        return;
+      }
       // device reprints BOOT after a reset; re-send the pending challenge if so
       if (line.includes("BOOT")) {
         if (currentChallengeHex && awaiting) sendLine(currentChallengeHex);
@@ -331,6 +481,126 @@
       awaiting = false;
       if (window._resendTimer) clearInterval(window._resendTimer);
       onSignature(serial, sigHex);
+    }
+
+    // ── Ostensor: arm, wait for the human press, verify ───────────────────────
+    async function ostensorChallenge() {
+      el("result").innerHTML = "";
+      el("againBtn").classList.add("hidden");
+      const payload = crypto.getRandomValues(new Uint8Array(32));
+      currentPayloadHex = bytesToHex(payload);
+      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", payload));
+      currentChallengeHex = bytesToHex(digest);
+      awaiting = true;
+
+      // NO RESEND LOOP. SelfKnot tolerates a repeated challenge; Ostensor answers a second
+      // ARM with "ERR busy" because the first arm is still pending, and hammering it would
+      // fill the log with errors while the operator is being asked to press the button.
+      // Measured 2026-08-10: an arm that times out on the host is NOT consumed — the
+      // firmware still holds it — so one ARM is both necessary and sufficient.
+      if (window._resendTimer) clearInterval(window._resendTimer);
+      const ack = await askAndWait("ARM " + currentChallengeHex, /ARMED|ERR/i, 4000);
+      if (!ack) { renderOstensorState("no-arm"); awaiting = false; return; }
+      if (/ERR/i.test(ack) && !/busy/i.test(ack)) {
+        logLine("!!", ack.trim()); renderOstensorState("no-arm"); awaiting = false; return;
+      }
+      ostensorState.armed = true;
+      el("action-card").classList.remove("hidden");
+      el("challengeLine").textContent = "challenge " + currentChallengeHex.slice(0, 24) + "…";
+      // THE PRESS IS THE PRODUCT. This is not an apology for an extra step.
+      setStatus("Now press the button on your device", "wait");
+    }
+
+    async function onOstensorSignature(derHex) {
+      setStatus("Signature received — verifying in your browser…", "live");
+      // EVERY CLAIM FIELD COMES FROM THE REGISTRY RECORD. NONE IS ASSERTED HERE.
+      //
+      // Three values used to be written in by hand at this point and each was wrong in a
+      // different way. Corrected 2026-09-08.
+      //
+      // 1. `identity_tier: ... || "REGISTERED"` — defaulted an ABSENT tier to the STRONGEST
+      //    device rung. verifier.js normalizeRecord() already implements the A-3 ruling
+      //    (7a6969a, "an absent identity_tier renders as absent, not as the weakest rung")
+      //    with `?? null` — but only if it is allowed to SEE the absence. Filling it in
+      //    here meant the guard downstream could never fire. A default that cannot
+      //    disagree with the thing it stands in for is not a default, it is an assertion.
+      //
+      // 2. `presence_binding_type: "secure-world-enforced"` and
+      // 3. `content_binding_type: "shown-digest"` — hardcoded, and NOT IN THE VOCABULARY.
+      //    verifier.js defines presence as secure-domain|hardware-interlock|
+      //    firmware-mediated|none and content as secure-domain-display|firmware-display|
+      //    none. These two tokens match no rendering branch, so they printed NOTHING while
+      //    still reading as not-"none" in the bareness test — a claim carried in the data
+      //    and invisible on the page.
+      //
+      //    They also said the thing FINDING-UNDERPOT-LABEL-FLEET-CLAIM-001 ruled false on
+      //    2026-09-05: the deleted comment read "the secure world owns the display and the
+      //    button on this article", which describes the hardened R1 Ostensor that was never
+      //    built. Every fabbed Rev-B article is TZEN=0x0 running a plain non-secure
+      //    application. That finding was stamped CLOSED after fixing the LABEL TOOL; this
+      //    surface was never swept, and it is the one the customer actually looks at.
+      //
+      // THIS PAGE CANNOT MEASURE THE ARTICLE. It reads a certificate over a serial port; it
+      // cannot see an option byte. So it must never originate a claim about presence or
+      // content binding — it passes through what the registry recorded from provisioning,
+      // and defaults to verifier.js's own weakest value when the registry said nothing.
+      const reg = ostensorState.rec || {};
+      const rec = {
+        record_version: "1.0",
+        identity_tier: reg.identity_tier ?? null,
+        presence_binding_type: reg.presence_binding_type ?? "none",
+        content_binding_type: reg.content_binding_type ?? "none",
+        short_code: reg.short_code || "",
+        device_id: reg.device_id || "",
+        signed_payload_hex: currentPayloadHex,
+        challenge_hash: currentChallengeHex,
+        signature: derHex,                 // DER — verifier.js signatureToRaw() handles it
+        public_key: ostensorState.pubHex,
+      };
+      const r = await verifyRecord(rec);
+      renderVerdict(r);
+      // The chain question is rendered SEPARATELY and always, pass or fail, so a green
+      // verdict can never be read as "Infineon attested this key" when no chain was checked.
+      renderChainNote(ostensorState.chain);
+      setStatus("Connected", "live");
+      el("againBtn").classList.remove("hidden");
+    }
+
+    // FOUR OUTCOMES, FOUR RENDERINGS. Only one of them is an alarm, and the page must not
+    // dress the ordinary ones to look like it. A page that renders "device asleep",
+    // "not a ZKNOT unit", "waiting for you" and "the signature is wrong" identically is the
+    // verified:true failure in a new place.
+    function renderOstensorState(kind) {
+      const box = el("result");
+      if (kind === "no-cert") {
+        box.innerHTML = `<div class="verdict cannot"><h2>NO RESPONSE</h2>
+          <p class="headline">The device did not return a certificate. It may be asleep, or
+          the port may belong to something else. <b>Nothing failed to verify</b> — nothing was
+          checked yet.</p></div>`;
+      } else if (kind === "unregistered") {
+        box.innerHTML = `<div class="verdict cannot"><h2>NOT A REGISTERED UNIT</h2>
+          <p class="headline">This device answered and presented a valid key, but no ZKNOT
+          record carries it. It is not an enrolled unit. <b>This is not a failed
+          verification</b> — there is nothing to verify against.</p></div>`;
+      } else if (kind === "no-arm") {
+        box.innerHTML = `<div class="verdict cannot"><h2>DEVICE DID NOT ARM</h2>
+          <p class="headline">The unit did not accept the challenge, so no press can be
+          collected. Unplug it, plug it back in, and try again.</p></div>`;
+      } else if (kind === "lookup-error") {
+        box.innerHTML = `<div class="verdict cannot"><h2>CANNOT REACH THE REGISTRY</h2>
+          <p class="headline">Your device is fine. This page could not reach ZKNOT to look up
+          its key, so no verdict can be given. Try again when you are online.</p></div>`;
+      }
+    }
+
+    function renderChainNote(chain) {
+      if (!chain) return;
+      const box = el("result");
+      const d = document.createElement("div");
+      d.className = "verdict cannot";
+      d.style.marginTop = "12px";
+      d.innerHTML = `<h2>CERTIFICATE CHAIN NOT CHECKED</h2><p class="headline">${esc(chain.reason)}</p>`;
+      box.appendChild(d);
     }
 
     async function onSignature(serial, sigHex) {
