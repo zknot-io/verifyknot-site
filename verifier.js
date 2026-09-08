@@ -85,7 +85,18 @@ const TIER_VOCAB = {
   "KEY-REGISTERED": {
     label: "KEY-REGISTERED",
     proves: "The KEY that signed this is on file in the ZKNOT registry and was generated inside a secure element it has never left. The registry vouches for the key.",
-    does_not_prove: "That ZKNOT vouches for the DEVICE holding it. This device's firmware is open and user-replaceable by design; a modified unit signs with the same registered key. No secure boot, no readout protection, no tamper response.",
+    // GENERALISED 2026-09-05 per DECISION-VITNI-VERIFICATION-TIER-001 VT-3, remedy (i).
+    // The previous text was SelfKnot-specific and TWO of its assertions are FALSE about a
+    // correctly-shipped Vitni: "open and user-replaceable by design" describes a product
+    // decision Vitni did not make, and "no readout protection" contradicts D-RDP1-1, which
+    // makes RDP >= 1 a ratified shipping requirement. A PUBLISHED FALSE NEGATIVE IS STILL A
+    // PUBLISHED FALSEHOOD, and it appeared on the customer's own verification page.
+    // What is KEPT is the clause true of every article on this rung - that a modified unit
+    // signs with the same key. VT-3(i) as drafted dropped it; it is the most concrete thing
+    // a reader needs and "the machine around it is not attested" only implies it.
+    // "Firmware is open and user-replaceable by design" belongs on SelfKnot's product page,
+    // where it is a selling point rather than a verdict.
+    does_not_prove: "That ZKNOT vouches for the DEVICE holding it. The key is on file; the machine around it is not attested, and a modified unit signs with the same registered key.",
     // Deliberately NOT "check it against the registry" — that instruction has no referent
     // (see the registry-asserted note above) and it is not being reintroduced on a new rung.
     anchor: "Two different things, and only one of them is independent. Your browser re-verified the signature itself against the key carried in the record — that part you just watched happen. Whether that key is one ZKNOT vouches for is reported BY ZKNOT (the record's key_anchored and anchor fields); ZKNOT does not publish the registry out-of-band, so there is currently no source outside ZKNOT against which you can check the key's identity.",
