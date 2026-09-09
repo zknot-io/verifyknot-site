@@ -80,7 +80,7 @@ rsync -a \
   --exclude='*.sh' --exclude='*.py' --exclude='.gitignore' \
   "$SRC"/ "$STAGE"/
 # Pre-flight: refuse to deploy a partial site.
-for f in index.html verifier.js _redirects sign/index.html start/index.html; do
+for f in index.html verifier.js _redirects sign/index.html start/index.html retail/index.html; do
   [ -f "$STAGE/$f" ] || { echo "ABORT: missing $f in staged tree"; exit 1; }
 done
 echo "Staged $(find "$STAGE" -type f | wc -l) files."

@@ -4,6 +4,9 @@
 # /start serves the live-device verification app
 /start      /start/index.html  200
 /start/     /start/index.html  200
+# /retail serves the online-seller packet + live demo
+/retail      /retail/index.html 200
+/retail/     /retail/index.html 200
 # bare short code -> canonical /v/ form (SOP-001 links keep working)
 /ZK-:a-:b   /v/ZK-:a-:b        301
 # /v/* serves the single-page verify app
