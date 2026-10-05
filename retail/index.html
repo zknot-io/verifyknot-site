@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ZKNOT™ for Online Sellers — Attested Fulfilment</title>
-  <meta name="description" content="Seal the parcel, sign the condition, and let your buyer check it in their own browser. The signature math runs on their machine, not ours." />
+  <meta name="description" content="Seal the parcel and let your buyer check the seal in their own browser. The math runs on their machine, not ours." />
   <link rel="icon" href="https://zknot.io/favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -195,8 +195,9 @@
   <div class="eyebrow">For online sellers</div>
   <h1>Stop asking your buyer to take your word for it.</h1>
   <p class="lede">
-    Seal the parcel. Sign what you say is inside it. Your buyer checks both in their own
-    browser — no account, no app, and no reason to trust you or us.
+    Seal the parcel. Your buyer checks the seal in their own browser — no account, no
+    app, and no reason to trust you or us. Signing what you say is inside it is paused;
+    see step 4.
   </p>
 
   <div class="notice">
@@ -254,19 +255,20 @@
         </p>
       </li>
       <li>
-        <b>Sign the file with your device.</b>
+        <b>Sign the file with your device — paused.</b>
         <p>
-          Open <a href="/sign" style="color:var(--accent)">verifyknot.io/sign</a>, drop the
-          file, connect over USB, press the button. <b>The file is hashed in your browser
-          and never uploaded</b> — we receive a fingerprint, not your contents. You get a
-          short code back.
+          <b>This step does not produce a record today.</b> Our signing page checks a device's
+          signature in your browser, but it does not issue a public record or a code to put
+          on the slip. We paused issuing rather than weaken how the public rail decides who
+          may write to it, and it is being redesigned. Until then, keep the file. Its hash
+          is what a future record would carry, and nothing about it changes.
         </p>
       </li>
       <li>
-        <b>Put both codes on the packing slip and in the shipping email.</b>
+        <b>Put the seal code on the packing slip and in the shipping email.</b>
         <p>
-          The seal code answers <i>was it opened?</i> The signing code answers
-          <i>what did they say was in it?</i>
+          The seal code answers <i>was it opened?</i> A signing code that answers
+          <i>what did they say was in it?</i> comes back when issuing does.
         </p>
       </li>
     </ol>
@@ -280,15 +282,9 @@
           anything.</p>
       </div>
       <div class="lane">
-        <div class="who">After opening</div>
-        <p>They open the signing code. The signature is re-verified <b>in their browser</b>,
-          against the record's own data — not against a service that might one day answer
-          differently.</p>
-      </div>
-      <div class="lane">
-        <div class="who">If they want to be sure</div>
-        <p>They drop your condition file into the same page. Its SHA-256 either matches the
-          one that was signed or it does not. One changed byte and it does not.</p>
+        <div class="who">After opening — paused</div>
+        <p>Checking a signing code needs a signing record, and those are not being issued
+          right now (step 4). The seal record above is live and unaffected.</p>
       </div>
     </div>
 

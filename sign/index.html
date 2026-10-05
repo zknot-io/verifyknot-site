@@ -79,9 +79,18 @@
   <main>
     <div class="eyebrow">Attest a document</div>
     <h1>Sign a document with your SelfKnot.</h1>
-    <p class="lede">Choose a file, press your device, and get a verifiable ZK number. Your
-      document is hashed <em>in your browser</em> and never uploaded — only its hash is
-      attested. Anyone can later verify it at verifyknot.io without trusting ZKNOT.</p>
+    <p class="lede">Choose a file and press your device. Your document is hashed <em>in your
+      browser</em> and never uploaded, and the device's signature over it is checked on this
+      computer.</p>
+
+    <div class="unsupported" style="margin-bottom:22px;">
+      <b>Record issuing is paused.</b> This page checks your device's signature on this
+      computer, but it does not create a public record or a ZK number right now. We turned
+      issuing off rather than weaken how the public rail decides who may write to it; it is
+      being redesigned and this notice will say when it is back. To watch a device prove
+      itself, use <a class="inline" href="/start">verifyknot.io/start</a>. Existing records
+      still verify at <a class="inline" href="/">verifyknot.io</a>.
+    </div>
 
     <div id="unsupported" class="unsupported hidden">
       Signing needs the Web Serial API — available in desktop Chrome, Edge, or Opera, with the
@@ -121,7 +130,6 @@
   <script type="module">
     import { verifyRecord, bytesToHex } from "/verifier.js";
 
-    const API = "https://api.zknot.io";
 
     // pubkey source — bundled today, swap to api.zknot.io lookup later (one function)
     const BUNDLED_PUBKEYS = {
@@ -290,116 +298,31 @@
     }
 
     async function onSignature(serial, sigHex){
-      setStatus("Signed — verifying & issuing…","live");
       const pub=pubkeyForSerial(serial);
-      if(!pub){ renderFail("Device "+serial+" is not in the enrolled key set; cannot issue."); return; }
-
-      // local fail-closed check before we issue anything
+      if(!pub){ renderFail("Device "+serial+" is not in this page's key set, so its signature cannot be checked here."); return; }
       const rec={record_version:"1.0",identity_tier:"SELF-ASSERTED",presence_binding_type:"firmware-mediated",
                  content_binding_type:"none",device_id:serial,signed_payload_hex:docHashHex,
                  challenge_hash:challengeHex,signature:sigHex,public_key:pub};
       const r=await verifyRecord(rec);
-      if(r.verdict!=="VERIFIED_CLIENT_SIDE"){ renderFail("Local verification failed: "+r.headline); return; }
-
-      const ingest={
-        artifact_id: crypto.randomUUID(),
-        artifact_type:"ZKEY_SIGN",
-        device_id: serial,
-        challenge_hash: challengeHex,
-        signature: sigHex,
-        public_key: pub,
-        signed_at: new Date().toISOString(),
-        // identity_tier is NOT sent. app/routers/attest.py:106 refuses reserved metadata
-        // keys with a 403 — "a record may not carry its own verification result" — and
-        // identity_tier is one of them. The server derives it at verify time instead
-        // (verify.py:102-108). With no provision_method on the record the derivation
-        // returns null, which the deployed verifier renders as SELF-ASSERTED: the same
-        // answer this line used to assert, now computed rather than claimed.
-        metadata:{ product:"Rev2-Attestor", document_name:fileName, document_sha256:docHashHex,
-                   signed_payload_hex:docHashHex,
-                   presence_binding_type:"firmware-mediated", content_binding_type:"none" },
-      };
-      try{
-        const resp=await postAttest(ingest);
-        setStatus("Connected","live");
-        renderResult(resp);
-      }catch(e){
-        renderFail("Issuance failed: "+e.message+". The signature is valid locally; the record was not chained.");
-        setStatus("Connected","live");
-      }
-    }
-
-    async function postAttest(ingest){
-      const res=await fetch(`${API}/v1/attest`,{
-        method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(ingest)
-      });
-      if(!res.ok) throw new Error("HTTP "+res.status+" "+(await res.text()).slice(0,200));
-      return res.json();
-    }
-
-    function renderResult(resp){
-      const zk=resp.short_code;
-      const pos=resp.chain_position;
+      if(r.verdict!=="VERIFIED_CLIENT_SIDE"){ renderFail("The signature did not verify: "+r.headline); return; }
+      setStatus("Signed","live");
+      // Issuing is paused (DECISION-SIGN-ISSUANCE-SECURITY-001, 2026-10-05). Nothing is sent:
+      // no record, no file name, no hash leaves this page.
       el("result").innerHTML=`
         <div class="verdict ok">
-          <h2>Attested &amp; chained</h2>
-          <div class="zk">${esc(zk)}</div>
+          <h2>Signed — checked on this computer</h2>
           <dl class="kv">
-            <dt>Document</dt><dd>${esc(fileName)}</dd>
             <dt>Doc SHA-256</dt><dd>${esc(docHashHex)}</dd>
-            <dt>Device</dt><dd>${esc(resp.device_id)} (SELF-ASSERTED · firmware-mediated)</dd>
-            <dt>Chain pos</dt><dd>${esc(String(pos))}</dd>
-            <dt>Signed at</dt><dd>${esc(resp.signed_at)}</dd>
+            <dt>Device</dt><dd>${esc(serial)}</dd>
           </dl>
-          <div class="row">
-            <a class="primary" style="text-decoration:none;display:inline-block" href="/v/${encodeURIComponent(zk)}" target="_blank">Verify on verifyknot →</a>
-            <button id="certBtn" class="ghost">Download certificate</button>
-          </div>
         </div>
-        <p class="honesty">The timestamp is host-supplied (the device has no clock); ordering is
-          anchored by the chain position. Keep the original file — the record proves a file with
-          this hash was attested, but cannot reproduce the file itself.</p>`;
-      el("certBtn").addEventListener("click", ()=>downloadCert(resp));
+        <p class="honesty">The device's signature over this file's hash verifies against the
+          device's key, here in your browser. <b>No public record was created and nothing was
+          sent</b>, because record issuing is paused. There is no ZK number to share.</p>`;
     }
 
     function renderFail(msg){
-      el("result").innerHTML=`<div class="verdict fail"><h2>Not issued</h2><p>${esc(msg)}</p></div>`;
-    }
-
-    function downloadCert(resp){
-      const zk=resp.short_code;
-      const md=`# ZKNOT Attestation Certificate
-
-**ZK number: ${zk}**  →  https://verifyknot.io/v/${zk}
-
-- Document: ${fileName}
-- Document SHA-256: ${docHashHex}
-- Signed by device: ${resp.device_id}  (SELF-ASSERTED · firmware-mediated presence)
-- Chain position: ${resp.chain_position}
-- Attested: ${resp.signed_at}
-
-## What this proves
-A signature was produced by device ${resp.device_id}'s non-extractable key over the SHA-256
-hash of this exact document. It proves the document existed in this exact form at the time
-above and was approved by this device, unaltered since. It does NOT assert the document's
-contents are correct, nor the real-world identity of the signer.
-
-## How a skeptic verifies it — without trusting ZKNOT
-1. Hash your copy:  sha256sum "${fileName}"
-2. Confirm it equals the Document SHA-256 above.
-3. Look up ${zk} at https://verifyknot.io/v/${zk} — the signature is verified in your browser.
-
-The timestamp is host-supplied (no device clock); ordering is anchored by the chain position.
-Tier-0 / AP-1. The verifier states exactly what was proven, and no more.
-
-Page 1 of 1
-`;
-      const blob=new Blob([md],{type:"text/markdown"});
-      const a=document.createElement("a");
-      a.href=URL.createObjectURL(blob);
-      a.download=`${fileName}.zkcert.md`;
-      a.click();
-      URL.revokeObjectURL(a.href);
+      el("result").innerHTML=`<div class="verdict fail"><h2>Not signed</h2><p>${esc(msg)}</p></div>`;
     }
 
     async function disconnect(){
