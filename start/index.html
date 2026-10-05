@@ -223,7 +223,7 @@
 
     // Per-connection Ostensor state. `armed` gates the SIG= branch so a stray line from a
     // SelfKnot session can never be read as an Ostensor signature.
-    const ostensorState = { is: false, pubHex: null, rec: null, chain: null, armed: false };
+    const ostensorState = { is: false, pubHex: null, rec: null, chain: null, armed: false, registered: false };
 
     // Detect: Ostensor answers PING with PONG; SelfKnot does not.
     async function detectOstensor() {
@@ -266,12 +266,15 @@
     // explicit unverified state that the page DISPLAYS, rather than omitting the question.
     // verifier.js's honest-limits line for REGISTERED already says "No cert chain was
     // verified"; this keeps the page consistent with it instead of quietly implying more.
-    function certChainStatus() {
+    function certChainStatus(registered) {
       return {
         verified: false,
         reason: "Infineon CA 306 certificate is not provisioned in this page, so the " +
-                "issuer signature was NOT checked. The key matches a registered record — " +
-                "that is a registry match, not proof of secure-hardware custody.",
+                "issuer signature was NOT checked. " + (registered
+                  ? "The key matches a registered record — that is a registry match, not " +
+                    "proof of secure-hardware custody."
+                  : "The key is not registered with ZKNOT either, so nothing outside this " +
+                    "device vouches for it."),
       };
     }
 
@@ -360,12 +363,17 @@
       const id = await ostensorIdentity();
       if (!id) { renderOstensorState("no-cert"); setStatus("Connected", "live"); return; }
       ostensorState.pubHex = id.pubHex;
-      ostensorState.chain = certChainStatus();
 
       const res = await resolveByKey(id.pubHex);
       if (res.error) { renderOstensorState("lookup-error"); setStatus("Connected", "live"); return; }
-      if (!res.found) { renderOstensorState("unregistered"); setStatus("Connected", "live"); return; }
-      ostensorState.rec = res.rec;
+      // UNREGISTERED IS CHALLENGED, NOT TURNED AWAY (operator, 2026-10-05). Vitni Plus ships
+      // off-rail, so stopping here meant no shipped Vitni Plus could prove anything. The device
+      // can still prove it holds the private key for the certificate it presented, which is
+      // exactly what an unregistered SelfKnot proves on this page, so it gets the same rung:
+      // SELF-ASSERTED. The registry is not consulted for any claim, because it has none.
+      ostensorState.registered = !!res.found;
+      ostensorState.rec = res.found ? res.rec : { identity_tier: "SELF-ASSERTED" };
+      ostensorState.chain = certChainStatus(ostensorState.registered);
       await ostensorChallenge();
     }
 
@@ -559,6 +567,7 @@
       };
       const r = await verifyRecord(rec);
       renderVerdict(r);
+      if (!ostensorState.registered) renderUnregisteredNote();
       // The chain question is rendered SEPARATELY and always, pass or fail, so a green
       // verdict can never be read as "Infineon attested this key" when no chain was checked.
       renderChainNote(ostensorState.chain);
@@ -591,6 +600,17 @@
           <p class="headline">Your device is fine. This page could not reach ZKNOT to look up
           its key, so no verdict can be given. Try again when you are online.</p></div>`;
       }
+    }
+
+    function renderUnregisteredNote() {
+      const d = document.createElement("div");
+      d.className = "verdict cannot";
+      d.style.marginTop = "12px";
+      d.innerHTML = `<h2>NOT A REGISTERED UNIT — SELF-ASSERTED</h2><p class="headline">This
+        device holds the private key for the certificate it presented, and it signed your
+        challenge with it. No ZKNOT record carries this key, so that is all this check
+        proves: it says nothing about which unit this is or who made it.</p>`;
+      el("result").appendChild(d);
     }
 
     function renderChainNote(chain) {

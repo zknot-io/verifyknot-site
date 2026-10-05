@@ -204,11 +204,10 @@
     <h3>What works today</h3>
     <p>
       The seals and all four devices are for sale at <a href="https://zknot.io" style="color:var(--amber)">zknot.io</a>.
-      The seal check works now. A SelfKnot proves itself live at
-      <a href="/start" style="color:var(--amber)">verifyknot.io/start</a>. A Vitni Plus or
-      Ostensor does too, but only once its key is enrolled on the rail; an unenrolled unit is
-      reported as "not a registered unit" and is not challenged. Vitni does not verify there
-      yet. The table says which applies. Signing a file into a
+      The seal check works now. SelfKnot, Vitni Plus and Ostensor prove themselves live at
+      <a href="/start" style="color:var(--amber)">verifyknot.io/start</a>. A unit whose key
+      is not enrolled on the rail verifies as SELF-ASSERTED and is labelled "not a registered
+      unit". Vitni does not verify there yet. Signing a file into a
       public record is paused (step 4 below). If you sell something worth arguing about,
       <a href="#pilot" style="color:var(--amber)">talk to us</a>.
     </p>
@@ -368,17 +367,17 @@
         </tr>
         <tr>
           <td><b>Vitni Plus</b></td>
-          <td>KEY-REGISTERED once enrolled on the rail</td>
+          <td>KEY-REGISTERED once enrolled on the rail; SELF-ASSERTED on /start until then</td>
           <td>Yes — an unarmed press is refused and produces nothing</td>
           <td>The first fleet cleared for sale</td>
-          <td>For sale · <b>verifies on /start only once enrolled on the rail</b>; units shipped unenrolled show "not a registered unit"</td>
+          <td>For sale · verifies on /start (SELF-ASSERTED until enrolled on the rail)</td>
         </tr>
         <tr>
           <td><b>Ostensor</b></td>
-          <td>KEY-REGISTERED once enrolled, or REGISTERED on measured hardening</td>
+          <td>KEY-REGISTERED once enrolled, or REGISTERED on measured hardening; SELF-ASSERTED on /start until enrolled</td>
           <td>Physical button; the strong-form gate is not built</td>
           <td>A screen. It shows you the digest and <b>refuses to sign if what it showed is not what it would sign</b></td>
-          <td>For sale · <b>verifies on /start only once enrolled on the rail</b>; units shipped unenrolled show "not a registered unit"</td>
+          <td>For sale · verifies on /start (SELF-ASSERTED until enrolled on the rail)</td>
         </tr>
       </tbody>
     </table>
