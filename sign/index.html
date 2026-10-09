@@ -93,8 +93,8 @@
     </div>
 
     <div id="unsupported" class="unsupported hidden">
-      Signing needs the Web Serial API — available in desktop Chrome, Edge, or Opera, with the
-      SelfKnot plugged in. (Verifying an existing record works in any browser at
+      Signing needs Web Serial or WebUSB — desktop Chrome, Edge, or Opera, or Chrome on Android —
+      with the SelfKnot plugged in. No iPhone or iPad browser supports either. (Verifying an existing record works in any browser at
       <a class="inline" href="/">verifyknot.io</a>.)
     </div>
 
@@ -129,6 +129,7 @@
 
   <script type="module">
     import { verifyRecord, bytesToHex } from "/verifier.js";
+    import { pickPort, transport } from "/usb-serial.js";
 
 
     // pubkey source — bundled today, swap to api.zknot.io lookup later (one function)
@@ -192,7 +193,7 @@
     }
     function setStatus(t,k){ el("statusText").textContent=t; el("dot").className="dot"+(k?" "+k:""); }
 
-    if(!("serial" in navigator)){
+    if(!transport()){
       el("unsupported").classList.remove("hidden");
     } else {
       el("file-card").classList.remove("hidden");
@@ -226,9 +227,9 @@
 
     async function connect(){
       try{
-        port=await navigator.serial.requestPort();
+        port=await pickPort();
         await port.open({baudRate:115200});
-      }catch(e){ setStatus("No port selected","err"); return; }
+      }catch(e){ port=null; setStatus(e&&e.name==="NotFoundError"?"No device selected":`Could not open device: ${e&&e.message||e}`,"err"); return; }
       writer=port.writable.getWriter();
       deviceReady=true;
       el("connectBtn").disabled=true;

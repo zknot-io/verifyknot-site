@@ -111,7 +111,8 @@
       computed on your machine — not asserted by our server.</p>
 
     <div id="unsupported" class="unsupported hidden">
-      This page needs the Web Serial API, available in desktop Chrome, Edge, or Opera.
+      This page needs Web Serial or WebUSB: desktop Chrome, Edge, or Opera, or Chrome on Android.
+      No iPhone or iPad browser supports either.
       Open it there to connect a device. (On other browsers you can still verify a recorded
       attestation at <a class="inline" href="/">verifyknot.io</a>.)
     </div>
@@ -145,6 +146,7 @@
 
   <script type="module">
     import { verifyRecord, bytesToHex, hexToBytes } from "/verifier.js";
+    import { pickPort, transport } from "/usb-serial.js";
 
     // ── pubkey source ─────────────────────────────────────────────────────────
     // SWAP SEAM: today these are bundled (offline, auditable, no backend). To go
@@ -328,7 +330,7 @@
       el("dot").className = "dot" + (kind ? " " + kind : "");
     }
 
-    if (!("serial" in navigator)) {
+    if (!transport()) {
       el("unsupported").classList.remove("hidden");
     } else {
       el("connect-card").classList.remove("hidden");
@@ -339,10 +341,13 @@
 
     async function connect() {
       try {
-        port = await navigator.serial.requestPort();
+        port = await pickPort();
         await port.open({ baudRate: 115200 });
       } catch (e) {
-        setStatus("No port selected", "err");
+        // Say what failed. "No port selected" for every error is what hid the Android
+        // empty-picker problem behind what looked like an operator mistake.
+        port = null;
+        setStatus(e && e.name === "NotFoundError" ? "No device selected" : `Could not open device: ${e && e.message || e}`, "err");
         return;
       }
       writer = port.writable.getWriter();

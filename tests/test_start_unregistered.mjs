@@ -17,7 +17,7 @@ const html = readFileSync(resolve(root, "start/index.html"), "utf8");
 const moduleSrc = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
 const script0Imports = moduleSrc.match(/import\s*\{([^}]*)\}\s*from\s*"\/verifier\.js"/)[1]
   .split(",").map((x) => x.trim()).filter(Boolean);
-const script = moduleSrc.replace(/^\s*import .*$/m, "");
+const script = moduleSrc.replace(/^\s*import .*$/gm, "");
 
 // A minimal X.509-shaped DER carrying the key as a P-256 SubjectPublicKeyInfo. The page locates
 // the key by its BIT STRING (03 42 00 04 || X || Y), which is what this reproduces.
@@ -43,6 +43,8 @@ async function scenario({ registered, tamper }) {
   // Inject exactly what the page's import line names, and nothing more, so a function the page
   // uses but never imports fails here as it fails in a browser (the 2026-10-05 hexToBytes defect).
   for (const n of script0Imports) w[n] = V[n];
+  w.transport = () => "serial";       // the /usb-serial.js import; transport is tested on its own
+  w.pickPort = async () => { throw new Error("no device in this test"); };
   w.eval(script + `
     window.__setPayload = (p, c) => { currentPayloadHex = p; currentChallengeHex = c; };
     window.__state = () => ostensorState;`);

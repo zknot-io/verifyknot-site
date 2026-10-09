@@ -18,7 +18,7 @@ const hex = V.bytesToHex;
 
 const html = readFileSync(resolve(root, "sign/index.html"), "utf8");
 const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1]
-  .replace(/^\s*import .*$/m, "");
+  .replace(/^\s*import .*$/gm, "");
 
 function buildDom() {
   const dom = new JSDOM(html.replace(/<script type="module">[\s\S]*?<\/script>/, ""),
@@ -26,6 +26,8 @@ function buildDom() {
   const w = dom.window;
   w.verifyRecord = V.verifyRecord;
   w.bytesToHex = V.bytesToHex;
+  w.transport = () => "serial";
+  w.pickPort = async () => { throw new Error("no device in this test"); };
   w.__sent = 0;
   w.fetch = async () => { w.__sent++; throw new Error("network must not be used"); };
   // One eval: the script's const/let bindings are not visible to a second eval here,
