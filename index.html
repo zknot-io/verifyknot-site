@@ -546,6 +546,33 @@
             </details>
           </div>
 
+          <!-- Device-document view (DECISION-DEVICE-ISSUANCE-001): shown only for
+               record_kind === "device_document". Every value in it is read from the
+               bytes the device signed, never from unsigned metadata. -->
+          <div id="ddCard" style="display:none;border:1px solid rgba(34,197,94,.35);border-radius:10px;padding:16px;margin:12px 0;background:rgba(34,197,94,.05)">
+            <div id="ddTestBanner" style="display:none;margin:-4px 0 12px;padding:8px 10px;border:1px dashed #f59e0b;border-radius:8px;color:#f59e0b;font-size:12px;font-weight:700;letter-spacing:.04em">TEST RECORD — signed to test device issuance. It is not a document and confirms nothing about one.</div>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+              <span style="font-size:20px" aria-hidden="true">⬢</span>
+              <div style="font-weight:600;font-size:15px;min-width:0" id="ddTitle">Document signed by a ZKNOT device</div>
+              <span id="ddBadge" style="margin-left:auto;font-size:12px;font-weight:700;letter-spacing:.02em;border:1px solid;border-radius:20px;padding:3px 10px;white-space:nowrap">VALID</span>
+            </div>
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:13px">
+              <div style="opacity:.55">Device</div><div id="ddDevice">—</div>
+              <div style="opacity:.55">Identity</div><div id="ddTier">—</div>
+              <div style="opacity:.55">Document SHA-256</div><div class="hash" id="ddHash" style="overflow-wrap:anywhere">—</div>
+              <div style="opacity:.55">Signed</div><div id="ddWhen">—</div>
+              <div style="opacity:.55">Signature</div><div id="ddSig">—</div>
+            </div>
+            <div style="margin-top:14px;font-size:12px;line-height:1.6;opacity:.8" id="ddScope">—</div>
+            <div id="ddCopyPanel" style="display:none;margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08)">
+              <div style="font-weight:600;font-size:13px;margin-bottom:6px">Compare your file</div>
+              <div style="font-size:12px;opacity:.7;margin-bottom:10px">Choose your copy. Its SHA-256 is computed here, in your browser, and compared with the fingerprint the device signed. Nothing is uploaded. Or run <span class="hash">sha256sum yourfile</span> and check it equals the Document SHA-256 above.</div>
+              <input type="file" id="ddFile" style="font-size:12px"/>
+              <div id="ddCopyResult" style="display:none;margin-top:10px;font-size:13px;line-height:1.5"></div>
+            </div>
+            <div id="ddCopyDisabled" style="display:none;margin-top:12px;font-size:12px;opacity:.6"></div>
+          </div>
+
           <div class="result-fields">
             <div class="field-row">
               <div class="field-key">Short Code</div>
@@ -715,8 +742,14 @@
       bip.style.display = 'none';
     }
 
+    // Device-document view.
+    const isDD = r.kind === 'device_document' && !!r.deviceDoc;
+    const ddc = $('ddCard');
+    if (isDD) { renderDeviceDoc(r); ddc.style.display = 'block'; }
+    else { ddc.style.display = 'none'; }
+
     // Hide the generic identity/presence/content grid for the file-led views.
-    if (isDoc || isBip) bindingRows.forEach((el) => { el.style.display = 'none'; });
+    if (isDoc || isBip || isDD) bindingRows.forEach((el) => { el.style.display = 'none'; });
     else bindingRows.forEach((el) => { el.style.display = ''; });
 
     $('rIdentity').textContent = r.badges.identity;
@@ -820,6 +853,80 @@
     }
   }
 
+  // ---- device document (DECISION-DEVICE-ISSUANCE-001) ------------------------
+  let ddState = { gate: { enabled: false }, test: false };
+
+  function setDDBadge(kind) {
+    const badge = $('ddBadge'), card = $('ddCard');
+    const paint = (color, tint) => {
+      badge.style.color = color; badge.style.borderColor = color;
+      card.style.borderColor = tint; card.style.background = tint.replace('.35', '.05');
+    };
+    if (kind === 'VALID') { badge.textContent = ddState.test ? 'VALID · TEST' : 'VALID'; paint('#22c55e', 'rgba(34,197,94,.35)'); }
+    else if (kind === 'INVALID') { badge.textContent = 'INVALID'; paint('#ef4444', 'rgba(239,68,68,.35)'); }
+    else { badge.textContent = 'CANNOT VERIFY'; paint('#f59e0b', 'rgba(245,158,11,.35)'); }
+  }
+
+  function renderDeviceDoc(r) {
+    const d = r.deviceDoc;
+    ddState.test = d.purpose === 'test';
+    $('ddTestBanner').style.display = ddState.test ? 'block' : 'none';
+    $('ddTitle').textContent = ddState.test ? 'Test record from a ZKNOT device' : 'Document signed by a ZKNOT device';
+    $('ddDevice').textContent = d.device_id || '—';
+    $('ddTier').textContent = (r.badges && r.badges.identity) || '—';
+    $('ddHash').textContent = d.content_sha256 || '—';
+    if (d.signed_at) {
+      const t0 = new Date(d.signed_at);
+      $('ddWhen').textContent = typeof d.window_seconds === 'number'
+        ? `between ${t0.toISOString().replace('.000Z', 'Z')} and ${new Date(t0.getTime() + d.window_seconds * 1000).toISOString().replace('.000Z', 'Z')}, by ZKNOT's server clock`
+        : `${t0.toISOString().replace('.000Z', 'Z')} (server-issued; no window recorded)`;
+    } else { $('ddWhen').textContent = '—'; }
+    $('ddSig').textContent = r.verdict === 'VERIFIED_CLIENT_SIDE' ? 'Verified in your browser' : '—';
+    $('ddScope').textContent =
+      'What this proves: a ZKNOT device whose key ZKNOT has on file signed this SHA-256 fingerprint ' +
+      'after its button was pressed, within the time window shown, and the record cannot be changed ' +
+      'without breaking that signature. If your file has the same SHA-256, it is the same file, byte for byte. ' +
+      'What it does NOT prove: that the device showed the document to anyone (it has no screen; it signed the ' +
+      'fingerprint the signing page handed it), who pressed the button, or that the document is true. ' +
+      'The time is ZKNOT\'s server clock, not an independent time authority.';
+    if (r.verdict === 'VERIFIED_CLIENT_SIDE' && d.key_anchored) setDDBadge('VALID');
+    else if (r.verdict === 'FAILED') setDDBadge('INVALID');
+    else setDDBadge('CANNOT');
+
+    ddState.gate = fileComparisonGate(r);
+    const panel = $('ddCopyPanel'), disabled = $('ddCopyDisabled'), result = $('ddCopyResult');
+    result.style.display = 'none'; result.textContent = '';
+    $('ddFile').value = '';
+    if (ddState.gate.enabled) { panel.style.display = 'block'; disabled.style.display = 'none'; }
+    else {
+      panel.style.display = 'none'; disabled.style.display = 'block';
+      disabled.textContent = ddState.gate.reason || 'File comparison is unavailable for this record.';
+    }
+  }
+
+  async function onDDFileChosen(file) {
+    const result = $('ddCopyResult');
+    if (!file || !ddState.gate.enabled) return;
+    result.style.display = 'block';
+    result.style.color = ''; result.textContent = 'Hashing in your browser…';
+    const cmp = await compareLocalFile(file, ddState.gate.fingerprint);
+    if (cmp.outcome === 'MATCH') {
+      result.style.color = '#22c55e';
+      result.textContent = ddState.test
+        ? '✓ MATCH — this is the issuance test file, byte for byte. It is a test, not a document.'
+        : '✓ MATCH — your file is byte-for-byte the one this device signed.';
+      setDDBadge('VALID');
+    } else if (cmp.outcome === 'MISMATCH') {
+      result.style.color = '#ef4444';
+      result.innerHTML = '✗ NO MATCH — your file is not the one this device signed.<br>your file: <span class="hash" style="overflow-wrap:anywhere">' +
+        cmp.localHex + '</span>';
+      setDDBadge('INVALID');
+    } else {
+      result.style.color = '#f59e0b';
+      result.textContent = '⚠ ' + cmp.reason;
+    }
+  }
+
   async function onCopyFileChosen(file) {
     const result = $('bcCopyResult');
     if (!file || !bipState.gate.enabled) return;
@@ -887,6 +994,9 @@
   });
   $('bcFile').addEventListener('change', (e) => {
     const f = e.target.files && e.target.files[0]; if (f) onCopyFileChosen(f);
+  });
+  $('ddFile').addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0]; if (f) onDDFileChosen(f);
   });
 
   // Auto-run from URL: handles BOTH /v/{code} (canonical) and bare /{code}

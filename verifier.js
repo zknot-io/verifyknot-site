@@ -281,6 +281,11 @@ export function mapApiResponse(api) {
   return {
     record_version: api.record_version ?? api.metadata?.record_version ?? "1.0",
     short_code: api.short_code ?? api.code,
+    // Device-document records (DECISION-DEVICE-ISSUANCE-001) are checked against
+    // the identity the record is STORED under, so both are carried through.
+    artifact_id: api.artifact_id,
+    artifact_type: api.artifact_type,
+    spend_window_seconds: api.metadata?.spend_window_seconds ?? null,
     device_id: api.device_id,
     // A-3 (DECISION-ATTESTATION-LINE-001 §3, RULED 2026-07-31): an absent
     // identity_tier renders as ABSENT. The old `?? "SELF-ASSERTED"` invented the
@@ -368,6 +373,47 @@ export function bipSignedContentHash(rec) {
 }
 
 /**
+ * DEVICE DOCUMENT (DECISION-DEVICE-ISSUANCE-001) — read the v4 record OUT OF THE
+ * SIGNED BYTES and check it describes the record it is stored as.
+ *
+ * Everything shown for a device document comes from here, never from metadata:
+ * the file fingerprint, the purpose (document | test) and the server-issued time
+ * are all inside what the device signed. Returns null on ANY doubt, and the caller
+ * fails closed:
+ *   - not JSON, or not byte-identical to its own canonical form (sorted keys, no
+ *     whitespace) — so there is exactly one reading of the bytes;
+ *   - binding_version is not v4, or artifact_type is not DEVICE_DOCUMENT;
+ *   - artifact_id / device_id differ from the record it is stored under — a
+ *     signature over a DIFFERENT record presented here;
+ *   - a malformed fingerprint, nonce or purpose.
+ * @param {Partial<VerifyRecord> & {artifact_id?: string}} rec
+ * @returns {{content_sha256: string, purpose: "document"|"test", signed_at: string, nonce: string, device_id: string, artifact_id: string}|null}
+ */
+export function deviceDocumentFromPayload(rec) {
+  if (!rec || !rec.signed_payload_hex) return null;
+  let text, obj;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(hexToBytes(rec.signed_payload_hex));
+    obj = JSON.parse(text);
+  } catch { return null; }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+  const canonical = JSON.stringify(Object.fromEntries(Object.keys(obj).sort().map((k) => [k, obj[k]])));
+  if (canonical !== text) return null;
+  const want = ["artifact_id", "artifact_type", "binding_version", "content_hash", "device_id", "nonce", "purpose", "session_id", "signed_at"];
+  if (Object.keys(obj).sort().join(",") !== want.join(",")) return null;
+  if (obj.binding_version !== "v4" || obj.artifact_type !== "DEVICE_DOCUMENT") return null;
+  if (obj.purpose !== "document" && obj.purpose !== "test") return null;
+  if (!/^[0-9a-f]{64}$/.test(obj.content_hash) || !/^[0-9a-f]{64}$/.test(obj.nonce)) return null;
+  if (typeof obj.signed_at !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(obj.signed_at)) return null;
+  if (!rec.artifact_id || obj.artifact_id !== rec.artifact_id) return null;
+  if (!rec.device_id || obj.device_id !== rec.device_id) return null;
+  return {
+    content_sha256: obj.content_hash, purpose: obj.purpose, signed_at: obj.signed_at,
+    nonce: obj.nonce, device_id: obj.device_id, artifact_id: obj.artifact_id,
+  };
+}
+
+/**
  * SCHEMA ADAPTER — the ONE place that decides what "the fingerprint this record
  * committed to" means, across record kinds. Returns the canonical expected
  * SHA-256, or null when the record carries no usable fingerprint (caller must
@@ -383,6 +429,12 @@ export function extractExpectedFingerprint(rec) {
   if (!rec || typeof rec !== "object") return null;
   const bip = bipSignedContentHash(rec);
   if (bip) return { algorithm: /** @type {const} */ ("SHA-256"), expectedHex: bip };
+  // Device document: the fingerprint inside the signed v4 bytes, or nothing. Never
+  // falls through to an unsigned field.
+  if (rec.record_kind === "device_document") {
+    const dd = deviceDocumentFromPayload(rec);
+    return dd ? { algorithm: /** @type {const} */ ("SHA-256"), expectedHex: dd.content_sha256 } : null;
+  }
   const meta = rec.metadata && typeof rec.metadata === "object" ? rec.metadata : {};
   const candidate = [rec.file_sha256, meta.file_sha256].find(
     (v) => typeof v === "string" && v.trim() !== ""
@@ -418,6 +470,16 @@ export function fileComparisonGate(result) {
     }
     const fp = extractExpectedFingerprint(result.bip);
     return fp ? { enabled: true, fingerprint: fp } : { enabled: false, reason: NO };
+  }
+
+  // Device document: signed in this browser, the signed bytes describe this record,
+  // AND the key is one ZKNOT vouches for. An unanchored key gets no green "match".
+  if (result.kind === "device_document" && result.deviceDoc) {
+    if (result.deviceDoc.key_anchored !== true) {
+      return { enabled: false, reason: "This record's signature is valid, but its key is not one ZKNOT vouches for, so a file match is not offered." };
+    }
+    const hex = result.deviceDoc.content_sha256;
+    return hex ? { enabled: true, fingerprint: { algorithm: "SHA-256", expectedHex: hex } } : { enabled: false, reason: NO };
   }
 
   // HashStamp document-timestamp.
@@ -567,6 +629,15 @@ export async function verifyRecord(rec) {
     signed_at: rec.signed_at ?? null,
   } : null;
   const bipExtra = isBip ? { kind: "bip_post", bip: bipBlock } : {};
+  // Device-document block. Filled from the SIGNED bytes only after the signature
+  // verifies; until then it carries no fingerprint, so nothing can be compared.
+  const isDeviceDoc = rec.record_kind === "device_document";
+  const ddBlock = isDeviceDoc ? {
+    content_sha256: null, purpose: null, signed_at: null,
+    window_seconds: typeof rec.spend_window_seconds === "number" ? rec.spend_window_seconds : null,
+    device_id: rec.device_id ?? null, key_anchored: rec.key_anchored === true,
+  } : null;
+  if (isDeviceDoc) Object.assign(bipExtra, { kind: "device_document", deviceDoc: ddBlock });
   const fail = (/** @type {string} */ headline) => ({
     verdict: /** @type {const} */ ("FAILED"),
     checks,
@@ -638,6 +709,17 @@ export async function verifyRecord(rec) {
   checks.push({ id: "VER-11", pass: sigOk, detail: sigOk ? "ECDSA P-256 signature verified in this browser over the signed payload" : "signature does NOT verify against the carried public key" });
   if (!sigOk) return fail("Cryptographically invalid: the signature does not verify.");
 
+  // DD-30 — a device document's signed bytes must BE a v4 record for THIS record.
+  // A valid signature over some other record, re-filed here, fails this check.
+  if (isDeviceDoc) {
+    const dd = deviceDocumentFromPayload(rec);
+    checks.push({ id: "DD-30", pass: !!dd, detail: dd
+      ? "the signed bytes are a v4 device-document record for this record id and device; the fingerprint, purpose and time below are read from them"
+      : "the signed bytes are NOT a v4 device-document record for this record id and device" });
+    if (!dd) return fail("Invalid: the signature is over a different record than the one shown.");
+    Object.assign(/** @type {any} */ (ddBlock), { content_sha256: dd.content_sha256, purpose: dd.purpose, signed_at: dd.signed_at });
+  }
+
   // VER-13 honesty note — this generation has no chain to the HSM root.
   // Sourced from TIER_VOCAB so the note never claims more than the tier allows
   // and stays consistent with the badges/headline below.
@@ -651,7 +733,7 @@ export async function verifyRecord(rec) {
   return {
     verdict: "VERIFIED_CLIENT_SIDE",
     checks,
-    headline: headlineOf(rec), // VER-04 / VER-25: maps 1:1 to the binding fields
+    headline: isDeviceDoc ? deviceDocHeadline(rec, /** @type {any} */ (ddBlock)) : headlineOf(rec), // VER-04 / VER-25
     badges: badgesOf(rec),
     server_discrepancy: discrepancy(rec, true),
     ...bipExtra,
@@ -797,6 +879,17 @@ function docHeadline(/** @type {Partial<VerifyRecord>} */ rec) {
   s += ". Your browser re-verified that signature over the fingerprint just now.";
   if (rec.chain_integrity === true) s += " The chain is intact.";
   s += " This proves the file's contents existed at that time; it does not identify who submitted it.";
+  return s;
+}
+
+/** VER-04 for a device document. Never exceeds what the record and tier support. */
+function deviceDocHeadline(/** @type {Partial<VerifyRecord>} */ rec, /** @type {any} */ dd) {
+  const t = tierOf(rec);
+  const who = rec.device_id ?? "an unknown device";
+  const reg = dd.key_anchored ? `a ZKNOT device registered as ${who} (${t.label})` : `${who}, whose key ZKNOT does not vouch for`;
+  let s = dd.purpose === "test" ? "TEST RECORD — not a document. " : "";
+  s += `The SHA-256 fingerprint shown was signed by ${reg} after a press of its button, and your browser re-verified that signature just now.`;
+  s += " The device has no screen: it signed the fingerprint the signing page handed it, and it did not show the document to anyone.";
   return s;
 }
 
