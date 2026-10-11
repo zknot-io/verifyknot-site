@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ZKNOT™ Sign — Attest a Document</title>
-  <meta name="description" content="Drop a document, press your ZKNOT SelfKnot, and get a verifiable ZK number. Your file is hashed in your browser and never uploaded." />
+  <meta name="description" content="Drop a document and press a registered ZKNOT SelfKnot to create a public record anyone can check. Your file is hashed in your browser and never uploaded." />
   <link rel="icon" href="https://zknot.io/favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -83,14 +83,12 @@
       browser</em> and never uploaded, and the device's signature over it is checked on this
       computer.</p>
 
-    <div class="unsupported" style="margin-bottom:22px;">
-      <b>Record issuing is paused.</b> This page checks your device's signature on this
-      computer, but it does not create a public record or a ZK number right now. We turned
-      issuing off rather than weaken how the public rail decides who may write to it; it is
-      being redesigned and this notice will say when it is back. To watch a device prove
-      itself, use <a class="inline" href="/start">verifyknot.io/start</a>. Existing records
-      still verify at <a class="inline" href="/">verifyknot.io</a>.
-    </div>
+    <p class="honesty" style="margin-bottom:22px;">
+      A public record is created only for a <b>SelfKnot registered with ZKNOT</b>. Any other
+      device, or any time the record service is off, still gets its signature checked on this
+      computer, with no record created. Your file is never uploaded, and its name is never
+      sent: only its SHA-256 fingerprint leaves this page.
+    </p>
 
     <div id="unsupported" class="unsupported hidden">
       Signing needs Web Serial or WebUSB — desktop Chrome, Edge, or Opera, or Chrome on Android —
@@ -106,6 +104,10 @@
       </div>
       <input type="file" id="fileInput" />
       <div id="filemeta" class="filemeta hidden"></div>
+      <label class="filemeta" style="display:flex;gap:8px;align-items:center;margin-top:14px;cursor:pointer;">
+        <input type="checkbox" id="isTest" style="display:inline-block;" />
+        This is a test signing. The record will say <b>TEST RECORD</b>, in the bytes the device signs.
+      </label>
     </div>
 
     <div id="connect-card" class="card hidden">
@@ -114,6 +116,7 @@
         <button id="connectBtn" class="primary">Connect device</button>
         <span class="status"><span id="dot" class="dot"></span><span id="statusText">No device connected</span></span>
       </div>
+      <p id="identity" class="filemeta hidden"></p>
       <p id="pressHint" class="filemeta hidden">A challenge has been sent to the device. Press its button to sign.</p>
       <div class="row" style="margin-top:14px;">
         <button id="disconnectBtn" class="ghost hidden">Disconnect</button>
@@ -180,10 +183,26 @@
 
     const el = (id) => document.getElementById(id);
     const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+    const API = "https://api.zknot.io";
+
+    // DECISION-DEVICE-ISSUANCE-001. The device signs a v4 record, not the file:
+    //   SHA-256( sorted-key, no-whitespace JSON of
+    //     {artifact_id, artifact_type, binding_version:"v4", content_hash, device_id,
+    //      nonce, purpose, session_id:"", signed_at} )
+    // artifact_id, nonce and signed_at come from the SERVER's challenge. device_id is the
+    // unit's ZKU- identity, found by its key. Nothing else about the user is sent.
+    const sha256Hex = async (bytes) => bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+    function v4RecordBytes(f) {
+      const keys = ["artifact_id","artifact_type","binding_version","content_hash","device_id","nonce","purpose","session_id","signed_at"];
+      const o = {}; for (const k of keys) o[k] = f[k];
+      return new TextEncoder().encode(JSON.stringify(o));
+    }
 
     let port=null, reader=null, writer=null, lineBuf="";
-    let docHashHex=null, challengeHex=null, fileName=null;
-    let deviceReady=false, awaiting=false, resendTimer=null;
+    let docHashHex=null, fileReady=false;
+    let serial=null, unit=null;          // unit: {device_id} once identified by key, else null
+    let challenge=null, challengeHex=null, mode=null;  // mode: "issue" | "local"
+    let deviceReady=false, awaiting=false, resendTimer=null, bootWaiter=null;
 
     function logLine(dir, text){
       const pre=el("log");
@@ -192,6 +211,7 @@
       pre.scrollTop=pre.scrollHeight;
     }
     function setStatus(t,k){ el("statusText").textContent=t; el("dot").className="dot"+(k?" "+k:""); }
+    function say(id, html){ const n=el(id); n.innerHTML=html; n.classList.remove("hidden"); }
 
     if(!transport()){
       el("unsupported").classList.remove("hidden");
@@ -200,6 +220,7 @@
       el("connect-card").classList.remove("hidden");
       el("connectBtn").addEventListener("click", connect);
       el("disconnectBtn").addEventListener("click", disconnect);
+      el("isTest").addEventListener("change", ()=>{ if(!awaiting) resetChallenge(); });
       wireDrop();
     }
 
@@ -212,16 +233,17 @@
       drop.addEventListener("drop",e=>{ const f=e.dataTransfer.files[0]; if(f) onFile(f); });
     }
 
+    // The purpose is fixed into the record when the challenge is built, so the box is
+    // locked from then until the signing ends.
+    function resetChallenge(){ challenge=null; challengeHex=null; mode=null; el("isTest").disabled=false; }
+
     async function onFile(file){
       el("result").innerHTML="";
-      fileName=file.name;
-      const buf=await file.arrayBuffer();
-      const docHashBuf=await crypto.subtle.digest("SHA-256", buf);
-      docHashHex=bytesToHex(new Uint8Array(docHashBuf));
-      const challengeBuf=await crypto.subtle.digest("SHA-256", docHashBuf);
-      challengeHex=bytesToHex(new Uint8Array(challengeBuf));
-      el("filemeta").classList.remove("hidden");
-      el("filemeta").innerHTML=`<b>${esc(file.name)}</b> · ${file.size} bytes<br>SHA-256: ${docHashHex}`;
+      resetChallenge();
+      docHashHex=await sha256Hex(await file.arrayBuffer());
+      fileReady=true;
+      // The name is shown here, on this computer, and never sent (FR-5).
+      say("filemeta", `<b>${esc(file.name)}</b> · ${file.size} bytes<br>SHA-256: ${docHashHex}`);
       maybeSign();
     }
 
@@ -231,12 +253,43 @@
         await port.open({baudRate:115200});
       }catch(e){ port=null; setStatus(e&&e.name==="NotFoundError"?"No device selected":`Could not open device: ${e&&e.message||e}`,"err"); return; }
       writer=port.writable.getWriter();
-      deviceReady=true;
       el("connectBtn").disabled=true;
       el("disconnectBtn").classList.remove("hidden");
-      setStatus("Connected","live");
+      setStatus("Connected — identifying the device…","live");
       readLoop();
-      setTimeout(maybeSign, 1000);
+      await identify();
+      deviceReady=true;
+      maybeSign();
+    }
+
+    // The SelfKnot prints its serial only at boot (PROTOCOL-SELFKNOT-WIRE-001). A soft
+    // reload (Ctrl-C, Ctrl-D) makes it print "BOOT serial=<18hex> selftest=PASS|FAIL".
+    // Measured on ATT-SR1-0002, 2026-10-05.
+    async function identify(){
+      const boot = new Promise((res)=>{ bootWaiter=res; setTimeout(()=>res(null), 8000); });
+      await writer.write(new Uint8Array([0x03])); await new Promise(r=>setTimeout(r,400));
+      await writer.write(new Uint8Array([0x04]));
+      const line = await boot; bootWaiter=null;
+      const m = line && line.match(/BOOT serial=([0-9A-Fa-f]{18}) selftest=(PASS|FAIL)/);
+      if(!m){ say("identity","The device did not report its serial, so this signing is checked on this computer only."); return; }
+      serial=m[1].toLowerCase();
+      if(m[2]!=="PASS"){ say("identity",`Device ${esc(serial)} reports selftest=FAIL. It cannot sign until it is power-cycled.`); serial=null; return; }
+      const pub=pubkeyForSerial(serial);
+      if(!pub){ say("identity",`Device ${esc(serial)} is not in this page's key set, so its signature cannot be checked here.`); return; }
+      try{
+        const r=await fetch(`${API}/v1/units/by-key/${pub}`);
+        if(r.ok){
+          const u=await r.json();
+          if(u.artifact_type==="SELFKNOT_UNIT" && /^ZKU-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/.test(u.device_id||"")){
+            unit={device_id:u.device_id};
+            say("identity",`Registered SelfKnot <b>${esc(u.device_id)}</b>. Signing creates a public record.`);
+            return;
+          }
+        }
+        say("identity",`SelfKnot ${esc(serial)} is not registered with ZKNOT. Its signature is checked on this computer, and no record is created.`);
+      }catch{
+        say("identity",`Could not reach the record service. Device ${esc(serial)}'s signature is checked on this computer only.`);
+      }
     }
 
     async function readLoop(){
@@ -259,9 +312,45 @@
 
     async function sendLine(s){ if(writer){ await writer.write(new TextEncoder().encode(s+"\n")); logLine("TX",s); } }
 
-    function maybeSign(){
-      if(!(docHashHex && deviceReady) || awaiting) return;
+    // Build what the device will sign. A registered unit gets a server challenge and a
+    // v4 record. Anything else, or a refused challenge, falls back to a local-only check
+    // over the file fingerprint, which creates nothing.
+    async function prepare(){
+      const purpose = el("isTest").checked ? "test" : "document";
+      if(unit){
+        try{
+          const r=await fetch(`${API}/v1/issuance/challenge`,{method:"POST"});
+          if(r.ok){
+            challenge=await r.json();
+            challenge.purpose=purpose;
+            const bytes=v4RecordBytes({
+              artifact_id:challenge.artifact_id, artifact_type:"DEVICE_DOCUMENT", binding_version:"v4",
+              content_hash:docHashHex, device_id:unit.device_id, nonce:challenge.nonce,
+              purpose, session_id:"", signed_at:challenge.signed_at,
+            });
+            challengeHex=await sha256Hex(bytes);
+            mode="issue";
+            return;
+          }
+          const why = r.status===503 ? "Record issuing is switched off right now." :
+                      r.status===429 ? "The record service is busy (rate limit). Try again shortly." :
+                      `The record service refused a challenge (HTTP ${r.status}).`;
+          say("identity", `${el("identity").innerHTML}<br>${esc(why)} This signing is checked on this computer only.`);
+        }catch{
+          say("identity", `${el("identity").innerHTML}<br>Could not reach the record service. This signing is checked on this computer only.`);
+        }
+      }
+      challenge=null;
+      challengeHex=await sha256Hex(new Uint8Array(docHashHex.match(/../g).map(h=>parseInt(h,16))));
+      mode="local";
+    }
+
+    async function maybeSign(){
+      if(!(fileReady && deviceReady) || awaiting) return;
+      if(!serial){ setStatus("This device cannot sign here","err"); return; }
       awaiting=true;
+      el("isTest").disabled=true;
+      await prepare();
       el("pressHint").classList.remove("hidden");
       setStatus("Waiting for button press…","wait");
       sendLine(challengeHex);
@@ -271,10 +360,11 @@
     }
 
     function handleLine(line){
-      if(line.includes("BOOT")){ if(challengeHex && awaiting) sendLine(challengeHex); }
-      // Device-side failures (code.py:65, :112-114). Nothing here recognised them, so a
-      // unit with a dead secure element left this page waiting for a SIG that could never
-      // arrive. INIT_FAIL is terminal — the device exits its main loop, so stop resending.
+      if(line.includes("BOOT")){
+        if(bootWaiter){ bootWaiter(line); return; }
+        if(challengeHex && awaiting) sendLine(challengeHex);
+      }
+      // Device-side failures (code.py:65, :112-114). INIT_FAIL is terminal.
       if(line.includes("INIT_FAIL") || line.includes("SIGN_FAIL")){
         const fatal=line.includes("INIT_FAIL");
         awaiting=false;
@@ -287,28 +377,70 @@
         return;
       }
       const m=line.match(/SIG\s+([0-9A-Fa-f]+)\s+([0-9a-fA-F]{64})\s+([0-9a-fA-F]{128})/);
-      if(!m) return;
-      const serial=m[1], chEcho=m[2], sigHex=m[3];
-      if(!awaiting) return;
-      if(chEcho.toLowerCase()!==challengeHex.toLowerCase()){
+      if(!m || !awaiting) return;
+      if(m[2].toLowerCase()!==challengeHex.toLowerCase()){
         logLine("!!","device signed a different challenge (waiting on the current one)"); return;
       }
+      if(m[1].toLowerCase()!==serial){ logLine("!!","signature came from a different device than the one identified"); return; }
       awaiting=false;
       if(resendTimer) clearInterval(resendTimer);
-      onSignature(serial, sigHex);
+      onSignature(m[3].toLowerCase());
     }
 
-    async function onSignature(serial, sigHex){
+    async function onSignature(sigHex){
       const pub=pubkeyForSerial(serial);
-      if(!pub){ renderFail("Device "+serial+" is not in this page's key set, so its signature cannot be checked here."); return; }
-      const rec={record_version:"1.0",identity_tier:"SELF-ASSERTED",presence_binding_type:"firmware-mediated",
-                 content_binding_type:"none",device_id:serial,signed_payload_hex:docHashHex,
-                 challenge_hash:challengeHex,signature:sigHex,public_key:pub};
-      const r=await verifyRecord(rec);
+      // Check the signature HERE before anything is sent. For a v4 record the signed
+      // payload is the record bytes; locally it is the file fingerprint.
+      const payloadHex = mode==="issue"
+        ? bytesToHex(v4RecordBytes({
+            artifact_id:challenge.artifact_id, artifact_type:"DEVICE_DOCUMENT", binding_version:"v4",
+            content_hash:docHashHex, device_id:unit.device_id, nonce:challenge.nonce,
+            purpose:challenge.purpose, session_id:"", signed_at:challenge.signed_at }))
+        : docHashHex;
+      const r=await verifyRecord({record_version:"1.0",identity_tier:"SELF-ASSERTED",presence_binding_type:"firmware-mediated",
+        content_binding_type:"none",device_id:serial,signed_payload_hex:payloadHex,
+        challenge_hash:challengeHex,signature:sigHex,public_key:pub});
       if(r.verdict!=="VERIFIED_CLIENT_SIDE"){ renderFail("The signature did not verify: "+r.headline); return; }
+      if(mode!=="issue"){ renderLocal(); return; }
+
+      setStatus("Signed — creating the record…","live");
+      let resp, body;
+      try{
+        resp=await fetch(`${API}/v1/issuance/device-sign`,{method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({nonce:challenge.nonce,artifact_id:challenge.artifact_id,device_id:unit.device_id,
+            content_hash:docHashHex,purpose:challenge.purpose,challenge_hash:challengeHex,signature:sigHex,public_key:pub})});
+        body=await resp.json().catch(()=>({}));
+      }catch{ renderLocal("Could not reach the record service after signing, so no record was created."); return; }
+      if(!resp.ok){
+        renderLocal(`The record service refused the record (HTTP ${resp.status}): ${typeof body.detail==="string"?body.detail:"no reason given"}`);
+        return;
+      }
+      setStatus("Record created","live");
+      const code=body.short_code;
+      const test=challenge.purpose==="test";
+      el("result").innerHTML=`
+        <div class="verdict ok">
+          <h2>${test?"Test record created":"Record created"}</h2>
+          <div class="zk">${esc(code)}</div>
+          <dl class="kv">
+            <dt>Doc SHA-256</dt><dd>${esc(docHashHex)}</dd>
+            <dt>Device</dt><dd>${esc(unit.device_id)}</dd>
+            <dt>Signed</dt><dd>${esc(challenge.signed_at)} (server time)</dd>
+            ${test?"<dt>Purpose</dt><dd>TEST RECORD</dd>":""}
+          </dl>
+          <p>Anyone can check it, with no account, at
+            <a class="inline" href="/v/${encodeURIComponent(code)}">verifyknot.io/v/${esc(code)}</a>.</p>
+        </div>
+        <p class="honesty">The record holds your file's fingerprint, never the file or its name. Whoever
+          has the same file can compare its SHA-256 on that page. It proves a registered ZKNOT device
+          signed this fingerprint after a button press, within five minutes of the server time shown. It
+          does not prove the device showed the document to anyone (a SelfKnot has no screen), or that the
+          document is true.</p>`;
+      resetChallenge();
+    }
+
+    function renderLocal(why){
       setStatus("Signed","live");
-      // Issuing is paused (DECISION-SIGN-ISSUANCE-SECURITY-001, 2026-10-05). Nothing is sent:
-      // no record, no file name, no hash leaves this page.
       el("result").innerHTML=`
         <div class="verdict ok">
           <h2>Signed — checked on this computer</h2>
@@ -317,17 +449,19 @@
             <dt>Device</dt><dd>${esc(serial)}</dd>
           </dl>
         </div>
-        <p class="honesty">The device's signature over this file's hash verifies against the
-          device's key, here in your browser. <b>No public record was created and nothing was
-          sent</b>, because record issuing is paused. There is no ZK number to share.</p>`;
+        <p class="honesty">${why?esc(why)+" ":""}The device's signature over this file's fingerprint verifies
+          against the device's key, here in your browser. <b>No public record was created</b> and there is
+          no ZK number to share.</p>`;
+      resetChallenge();
     }
 
     function renderFail(msg){
+      resetChallenge();
       el("result").innerHTML=`<div class="verdict fail"><h2>Not signed</h2><p>${esc(msg)}</p></div>`;
     }
 
     async function disconnect(){
-      awaiting=false; deviceReady=false;
+      awaiting=false; deviceReady=false; serial=null; unit=null; resetChallenge();
       if(resendTimer) clearInterval(resendTimer);
       try{ if(reader){ await reader.cancel(); reader.releaseLock(); } }catch{}
       try{ if(writer){ writer.releaseLock(); } }catch{}
@@ -336,6 +470,7 @@
       el("connectBtn").disabled=false;
       el("disconnectBtn").classList.add("hidden");
       el("pressHint").classList.add("hidden");
+      el("identity").classList.add("hidden");
       setStatus("Disconnected");
     }
   </script>
