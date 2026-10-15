@@ -361,9 +361,48 @@
     // Which device is on the other end? Ostensor and SelfKnot speak different protocols,
     // so the page probes rather than assuming. PING/PONG is the discriminator.
     async function startFlow() {
-      ostensorState.is = await detectOstensor();
+      protocolSwitched = false;
+      detecting = true;               // a plain Vitni answers PING itself with ERR fmt; that is
+      ostensorState.is = await detectOstensor();      // for the bare challenge to decide
+      detecting = false;
       if (!ostensorState.is) return newChallenge();          // SelfKnot path, unchanged
+      return ostensorFlow();
+    }
 
+    // A MISSED PONG MUST NOT DECIDE THE WHOLE SESSION (operator, 2026-10-15). A Vitni Plus
+    // whose PONG did not land inside detectOstensor's window was treated as a SelfKnot: the
+    // page sent it bare hex every 1.5 s, the device answered "ERR fmt (... PING | ARM <64hex>
+    // ...)" every time, ARM was never sent, and the press was refused NOT ARMED. The device
+    // had named its own protocol in every reply. So the SelfKnot path listens: a late PONG,
+    // or an ERR fmt that lists ARM, moves the session to the OPTIGA path, once. SelfKnot
+    // firmware never prints either line (code.py prints only BOOT / SIG / INIT_FAIL /
+    // SIGN_FAIL), so this cannot fire for one.
+    let protocolSwitched = false, detecting = false;
+    // Called at most once per session, from handleLine, when the device rejects the SelfKnot
+    // path. listsArm = the device named ARM itself (Vitni Plus) or a late PONG landed.
+    // Otherwise the rejection is ambiguous: a plain Vitni's verb list has no ARM, but an
+    // Ostensor (witnessmark firmware) answers a bad line with a bare "ERR fmt" and no list at
+    // all. So ask PING once more: PONG -> OPTIGA path; anything else -> say this device
+    // cannot be verified here and stop. A plain Vitni is never sent ARM or SIGN: its bring-up
+    // firmware signs SIGN with no button press, which this page must not present as a proof.
+    async function onSelfKnotPathRejected(why, listsArm) {
+      if (protocolSwitched) return;
+      protocolSwitched = true;
+      awaiting = false;
+      if (window._resendTimer) clearInterval(window._resendTimer);
+      if (!listsArm) {
+        detecting = true;
+        const pong = await askAndWait("PING", /PONG/i, 1800);
+        detecting = false;
+        if (!pong) { renderOstensorState("wrong-protocol"); setStatus("Connected", "live"); return; }
+        why += ", then PONG on a second PING";
+      }
+      logLine("!!", why + " — an OPTIGA device; switching to ARM");
+      ostensorState.is = true;
+      ostensorFlow();
+    }
+
+    async function ostensorFlow() {
       setStatus("Ostensor detected — reading its certificate…", "live");
       const id = await ostensorIdentity();
       if (!id) { renderOstensorState("no-cert"); setStatus("Connected", "live"); return; }
@@ -463,6 +502,10 @@
         onOstensorSignature(om[1]);
         return;
       }
+      if (!ostensorState.is && !detecting) {
+        if (/^PONG\b/i.test(line)) { onSelfKnotPathRejected("late PONG", true); return; }
+        if (/\bERR fmt\b/.test(line)) { onSelfKnotPathRejected("ERR fmt", /\bARM <64hex>/.test(line)); return; }
+      }
       // device reprints BOOT after a reset; re-send the pending challenge if so
       if (line.includes("BOOT")) {
         if (currentChallengeHex && awaiting) sendLine(currentChallengeHex);
@@ -512,7 +555,9 @@
       // Measured 2026-08-10: an arm that times out on the host is NOT consumed — the
       // firmware still holds it — so one ARM is both necessary and sufficient.
       if (window._resendTimer) clearInterval(window._resendTimer);
-      const ack = await askAndWait("ARM " + currentChallengeHex, /ARMED|ERR/i, 4000);
+      // "ERR fmt" is NOT an answer to ARM: after a switch from the SelfKnot path it is the
+      // device's late reply to a bare-hex challenge already on the wire.
+      const ack = await askAndWait("ARM " + currentChallengeHex, /ARMED|ERR(?! fmt)/i, 4000);
       if (!ack) { renderOstensorState("no-arm"); awaiting = false; return; }
       if (/ERR/i.test(ack) && !/busy/i.test(ack)) {
         logLine("!!", ack.trim()); renderOstensorState("no-arm"); awaiting = false; return;
@@ -564,7 +609,9 @@
         presence_binding_type: reg.presence_binding_type ?? "none",
         content_binding_type: reg.content_binding_type ?? "none",
         short_code: reg.short_code || "",
-        device_id: reg.device_id || "",
+        // null, not "": an unregistered unit has no name, and "" rendered the headline as
+        // "attributed to  (SELF-ASSERTED)" (2026-10-15). null takes verifier.js's own fallback.
+        device_id: reg.device_id || null,
         signed_payload_hex: currentPayloadHex,
         challenge_hash: currentChallengeHex,
         signature: derHex,                 // DER — verifier.js signatureToRaw() handles it
@@ -580,7 +627,7 @@
       el("againBtn").classList.remove("hidden");
     }
 
-    // FOUR OUTCOMES, FOUR RENDERINGS. Only one of them is an alarm, and the page must not
+    // FIVE OUTCOMES, FIVE RENDERINGS. Only one of them is an alarm, and the page must not
     // dress the ordinary ones to look like it. A page that renders "device asleep",
     // "not a ZKNOT unit", "waiting for you" and "the signature is wrong" identically is the
     // verified:true failure in a new place.
@@ -600,6 +647,11 @@
         box.innerHTML = `<div class="verdict cannot"><h2>DEVICE DID NOT ARM</h2>
           <p class="headline">The unit did not accept the challenge, so no press can be
           collected. Unplug it, plug it back in, and try again.</p></div>`;
+      } else if (kind === "wrong-protocol") {
+        box.innerHTML = `<div class="verdict cannot"><h2>THIS DEVICE CANNOT BE VERIFIED HERE</h2>
+          <p class="headline">The device answered, but it does not speak either protocol this
+          page uses, so no challenge was signed. <b>Nothing failed to verify</b> — nothing
+          was checked.</p></div>`;
       } else if (kind === "lookup-error") {
         box.innerHTML = `<div class="verdict cannot"><h2>CANNOT REACH THE REGISTRY</h2>
           <p class="headline">Your device is fine. This page could not reach ZKNOT to look up

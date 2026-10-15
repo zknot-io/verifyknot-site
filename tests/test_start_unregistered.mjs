@@ -80,6 +80,8 @@ async function run() {
   let out = await scenario({ registered: false, tamper: false });
   assert.match(out, /VERIFIED/, "unregistered: verified");
   assert.match(out, /SELF-ASSERTED/, "unregistered: SELF-ASSERTED");
+  assert.match(out, /attributed to unknown device \(SELF-ASSERTED\)/, "unregistered: headline names no device");
+  assert.ok(!/attributed to\s+\(/.test(out), "unregistered: no empty name in the headline");
   assert.match(out, /NOT A REGISTERED UNIT — SELF-ASSERTED/, "unregistered: note shown");
   assert.match(out, /not registered with ZKNOT either/, "unregistered: chain note says so");
   assert.ok(!/registry match/.test(out), "unregistered: no registry-match wording");
