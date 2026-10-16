@@ -142,6 +142,33 @@
     </div>
 
     <div id="result"></div>
+
+    <div class="card">
+      <details>
+        <summary>What you might see, and why</summary>
+        <p style="color:var(--text-dim);font-size:14px;margin:10px 0 4px;">This page refuses to
+          claim anything it cannot check. Most outcomes below are not errors — they are the page
+          declining to overstate what a device proved.</p>
+        <ul class="checks" style="font-size:14px;">
+          <li><span class="tag PASS">VERIFIED</span>The device signed a fresh random challenge
+            with the key it holds, and your browser checked that signature. If its key is on
+            ZKNOT's registry you also see the registered tier; if not, it reads
+            <b>SELF-ASSERTED</b> — proof it holds the key, and nothing about which unit it is.</li>
+          <li><span class="tag FAIL">VERIFICATION FAILED</span>A signature arrived but did not
+            match the challenge. The one case here that is a real alarm.</li>
+          <li><span class="tag NOTE">NO RESPONSE / did not arm</span>The device answered but never
+            produced a signature — asleep, mid-reset, or the port belongs to something else.
+            Nothing failed; nothing was checked. Unplug it, plug it back in, try again.</li>
+          <li><span class="tag NOTE">cannot be verified here</span>The device speaks a protocol
+            this page does not use for proofs. A bring-up or development unit signs on command
+            with no button press, so this page will not present its signature as a human
+            attestation. That is deliberate: the press is the product.</li>
+        </ul>
+        <p style="color:var(--text-dim);font-size:13px;margin:8px 0 0;">Different ZKNOT devices
+          speak different protocols — a SelfKnot, and the OPTIGA-based units, announce themselves
+          and this page adapts. The raw exchange is in the device log above, if you want to see it.</p>
+      </details>
+    </div>
   </main>
 
   <script type="module">
