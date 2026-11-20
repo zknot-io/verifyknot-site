@@ -205,6 +205,26 @@ const DOC_TIMESTAMP_INFO = {
   anchor: "Recompute SHA-256 of your own copy of the file and confirm it equals the fingerprint below; your browser has already re-verified the service-key signature over that fingerprint.",
 };
 
+/** Same scope, for records that carry an RFC 3161 token (state "present"). */
+const DOC_TIMESTAMP_TSA_PROVES = "The file with the SHA-256 fingerprint below had its fingerprint signed by ZKNOT's hosted HashStamp service key and recorded at a position in HashStamp's tamper-evident, hash-linked chain. The record also names an RFC 3161 timestamp over the same fingerprint from an independent time-stamping authority; download it and check it with openssl, without trusting ZKNOT.";
+
+/** Base URL of the HashStamp Worker that serves RFC 3161 tokens. */
+export const HASHSTAMP_TOKEN_BASE = "https://hashstamp-worker.shane-systems.workers.dev/token/";
+
+/** The record's independent timestamp, normalized, or null. Never invents one. */
+function tsaOf(/** @type {Partial<VerifyRecord>} */ rec) {
+  const it = rec.independent_timestamp;
+  if (!it || typeof it !== "object") return null;
+  if (it.state === "present" && it.gen_time) {
+    return { state: "present", tsa: String(it.tsa || "time-stamping authority"), gen_time: String(it.gen_time),
+      token_sha256: it.token_sha256 ?? null,
+      code: rec.short_code ?? null,
+      token_url: rec.short_code ? HASHSTAMP_TOKEN_BASE + encodeURIComponent(rec.short_code) : null };
+  }
+  if (it.state === "pending") return { state: "pending" };
+  return null;
+}
+
 /**
  * Is this a HashStamp document-timestamp record? Such records verify over the
  * file fingerprint directly (no reconstructable signed_payload), so they take a
@@ -302,6 +322,11 @@ export function mapApiResponse(api) {
     public_label: api.metadata?.public_label ?? null, // F2: optional user label (new records)
     stamped_at: api.metadata?.stamped_at ?? api.signed_at,
     product: api.metadata?.product ?? api.product,
+    // RFC 3161 independent timestamp (CCPROMPT-HASHSTAMP-TSA-001, live 2026-11-20).
+    // SERVER-REPORTED metadata: this page cannot check the TSA's signature, so it
+    // is shown as reported, with the token download and the openssl command that
+    // lets the reader check it without trusting ZKNOT. Absent on older records.
+    independent_timestamp: api.metadata?.independent_timestamp ?? null,
     chain_position: api.chain_position,
     chain_integrity: api.chain_integrity,
     signed_at: api.signed_at,
@@ -759,7 +784,9 @@ function docFields(/** @type {Partial<VerifyRecord>} */ rec) {
     // THIS browser; chain linkage is reported by the server (not walked client-side).
     assurance: {
       time_basis: "HASHSTAMP_SERVICE_TIME",
-      external_time_anchor: false,
+      // true only when the record names a present RFC 3161 token (server-reported).
+      external_time_anchor: tsaOf(rec)?.state === "present",
+      independent_timestamp: tsaOf(rec),
       signer: "HOSTED_SERVICE_KEY",
       signature_check: "VERIFIED_IN_BROWSER",
       chain_linkage: rec.chain_integrity === true ? "VERIFIED (server-reported)"
@@ -775,7 +802,7 @@ function docBadges(/** @type {Partial<VerifyRecord>} */ rec) {
   return {
     identity: DOC_TIMESTAMP_INFO.label,
     identity_label: DOC_TIMESTAMP_INFO.label,
-    proves: DOC_TIMESTAMP_INFO.proves,
+    proves: tsaOf(rec)?.state === "present" ? DOC_TIMESTAMP_TSA_PROVES : DOC_TIMESTAMP_INFO.proves,
     does_not_prove: DOC_TIMESTAMP_INFO.does_not_prove,
     anchor: DOC_TIMESTAMP_INFO.anchor,
     signer: rec.device_id ?? "HashStamp service key",
